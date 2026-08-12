@@ -50,7 +50,10 @@
 
     - name: Parse cluster state from state file
       ansible.builtin.set_fact:
-        cluster_infra_vlan_id: "{{ (cluster_infra_ipam_state_raw.content | b64decode | from_json).vlans[cluster_infra_state_key] | default('') }}"
+        cluster_infra_vlan_id: >-
+          {{ (cluster_infra_ipam_state_raw.content | b64decode
+          | from_json).vlans[cluster_infra_state_key]
+          | default('') }}
         cluster_infra_allocated_host_ids: >-
           {{ (cluster_infra_ipam_state_raw.content | b64decode
           | from_json).host_allocations[cluster_infra_state_key]

@@ -79,7 +79,9 @@
 
 - name: Set API public IP
   ansible.builtin.set_fact:
-    external_access_api_public_ip: "{{ (external_access_api_ipam_raw.content | b64decode | from_json).public_ips[external_access_state_key + '-api'][0] }}"
+    external_access_api_public_ip: >-
+      {{ (external_access_api_ipam_raw.content | b64decode
+      | from_json).public_ips[external_access_state_key + '-api'][0] }}
 
 - name: Allocate public IP for ingress  # noqa: no-changed-when
   environment:
