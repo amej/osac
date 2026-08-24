@@ -44,7 +44,7 @@ fulfillment-service (proto)
 └→ osac-installer (RBAC, Helm) — depends on all above
 ```
 
-For deployment coordination (image tags, submodules), see `osac-installer/AGENTS.md`.
+For deployment coordination (image tags, per-component release tags), see `osac-installer/AGENTS.md`.
 
 ## Knowledge Graph (graphify brain)
 

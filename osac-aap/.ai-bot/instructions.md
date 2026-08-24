@@ -147,13 +147,13 @@ Extends default with: line-length disabled, document-start disabled,
 indent-sequences whatever, hyphens max-spaces-after 4, truthy check-keys
 false, comments min-spaces-from-content 1.
 
-## Cross-Repo Dependencies
+## Cross-Component Dependencies
 
 Changes in osac-aap often require coordinated changes in:
 - **osac-operator** -- CRD spec changes, controller logic
 - **fulfillment-service** -- proto/API field additions
-- **osac-installer** -- submodule bump (automated via CI)
+- **osac-installer** -- chart dependency and Helm values update (mono-repo PR)
 
-You operate on this repo only. If a fix requires changes in another repo,
+You operate on this repo only. If a fix requires changes in another component,
 document the dependency in the PR description and stop. Do not attempt
-cross-repo changes.
+cross-component changes.
