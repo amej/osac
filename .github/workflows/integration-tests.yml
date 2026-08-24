@@ -258,7 +258,7 @@ jobs:
 
   # osac-installer's own smoke test: deploy the umbrella chart (which
   # composes every other component's chart via file:// dependencies, plus
-  # osac-ui/osac-csi-driver's submodule/OCI dependencies) to a local Kind
+  # osac-ui's OCI chart dependency) to a local Kind
   # cluster and verify it installs and upgrades idempotently. Distinct from
   # the jobs above, which test one component in isolation -- this is the
   # only place that exercises the umbrella chart's composition of all of
@@ -273,12 +273,7 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
       with:
-        submodules: recursive
         persist-credentials: false
-
-    - name: Update submodules to pinned commits
-      working-directory: osac-installer
-      run: git submodule update --init --recursive
 
     - name: Set up Helm
       uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310  # v5.0.1

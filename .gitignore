@@ -192,7 +192,7 @@ cython_debug/
 /osac-installer/kubeconfig.hub-access
 /osac-installer/charts/*/charts/*.tgz
 /osac-installer/charts/*/Chart.lock
-/osac-installer/chart-versions.txt
+/chart-sources.txt
 /osac-installer/images.txt
 /osac-installer/images-raw.txt
 
