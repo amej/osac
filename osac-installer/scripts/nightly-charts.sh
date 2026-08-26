@@ -155,13 +155,54 @@ osac_ui_nightly_image_ref() {
 # Usage: stamp_umbrella_ui_image_ref <values_yaml> <image_ref>
 stamp_umbrella_ui_image_ref() {
     local values_yaml="$1" image_ref="$2"
-    local safe_values_yaml
+    local safe_values_yaml tmp
     if [[ ! -f "${values_yaml}" ]]; then
         safe_values_yaml=$(_gha_sanitize_for_message "${values_yaml}")
         echo "::warning title=Missing values file::Values file not found: ${safe_values_yaml} — skipping ui.images.ui stamp" >&2
         return 0
     fi
-    IMAGE_REF="${image_ref}" yq -i '.ui.images.ui = strenv(IMAGE_REF)' "${values_yaml}"
+    if ! grep -qE '[[:space:]]ui:' "${values_yaml}"; then
+        safe_values_yaml=$(_gha_sanitize_for_message "${values_yaml}")
+        echo "::error::ui.images.ui key not found in ${safe_values_yaml}" >&2
+        return 1
+    fi
+    # stamp_umbrella_ui_image_ref uses awk instead of yq -i because yq reformats
+    # the entire YAML file on write — removing blank lines and normalizing inline
+    # comment spacing from 2 spaces to 1 space before '#'. This causes ct lint's
+    # yamllint (which requires 2-space comment padding via ~/.ct/lintconf.yaml) to
+    # fail during the nightly publish job. awk preserves all formatting outside the
+    # target line.
+    tmp="$(mktemp)"
+    if ! awk -v ref="${image_ref}" '
+        BEGIN { in_ui=0; in_ui_images=0; stamped=0; ui_key_indent="" }
+        /^ui:/ { in_ui=1; in_ui_images=0; ui_key_indent="" }
+        /^[^ #\t]/ && !/^ui:/ { in_ui=0; in_ui_images=0; ui_key_indent="" }
+        in_ui && /^[[:space:]]+images:/ {
+            match($0, /^[[:space:]]+/)
+            ui_key_indent = substr($0, RSTART, RLENGTH) "  "
+            in_ui_images=1
+        }
+        in_ui_images && ui_key_indent != "" && match($0, "^" ui_key_indent "ui:[[:space:]]") {
+            print ui_key_indent "ui: " ref
+            in_ui_images=0
+            stamped=1
+            next
+        }
+        { print }
+        END { exit(stamped ? 0 : 1) }
+    ' "${values_yaml}" > "${tmp}"; then
+        safe_values_yaml=$(_gha_sanitize_for_message "${values_yaml}")
+        echo "::error::ui.images.ui key not found under ui.images in ${safe_values_yaml}" >&2
+        rm -f "${tmp}"
+        return 1
+    fi
+    chmod --reference="${values_yaml}" "${tmp}"
+    mv "${tmp}" "${values_yaml}"
+    if ! grep -qF "${image_ref}" "${values_yaml}"; then
+        safe_values_yaml=$(_gha_sanitize_for_message "${values_yaml}")
+        echo "::error::Failed to stamp ui.images.ui in ${safe_values_yaml}" >&2
+        return 1
+    fi
 }
 
 # Usage: stamp_umbrella_ui_values <image_ref>
@@ -319,6 +360,7 @@ _build_slack_charts_table() {
 }
 
 # Usage: rewrite_umbrella_osac_ui_dependency <chart_yaml> <ui_version> <oci_repo>
+# yamllint is not performed on Chart.yaml. Hence, use of yq is safe here.
 rewrite_umbrella_osac_ui_dependency() {
     local chart_yaml="$1" ui_version="$2" oci_repo="$3"
     local safe_chart_yaml
@@ -347,6 +389,7 @@ rewrite_umbrella_osac_ui_dependency_and_rebuild() {
 }
 
 # Usage: stamp_osac_ui_chart <chart_dir> <sub_version> <image_ref>
+# The subchart is not subject to yamllinting. Hence, safe to use yq here.
 stamp_osac_ui_chart() {
     local chart_dir="$1" sub_version="$2" image_ref="$3"
     # osac-ui/charts/ui/templates/deployment.yaml reads .Values.images.ui
