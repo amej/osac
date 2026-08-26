@@ -99,8 +99,7 @@ We welcome community contributions to this collection. For more details, see [Co
 
 ## Support
 
-* Community users can find help through the [Communication](#Communication) section.
-* Red Hat Ansible Automation Platform subscribers can request support through [Automation Hub](https://console.redhat.com/ansible/automation-hub/collections/published/ansible/posix/) by using the "Create issue" button on the collection page.
+See [Communication](#Communication) section.
 
 ## Release Notes and Roadmap
 
