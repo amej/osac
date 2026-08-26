@@ -483,7 +483,7 @@ jobs:
         source osac-installer/scripts/nightly-charts.sh
 
         WORKFLOW_URL="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}"
-        SUMMARY_TEXT=$(build_slack_charts_published_summary nightly-artifacts/chart-sources.txt "${REPO_OWNER}" "${GH_TOKEN}")
+        SUMMARY_TEXT=$(build_slack_charts_published_summary nightly-artifacts/chart-sources.txt "${REPO_OWNER}")
 
         jq -n \
           --arg version "${VERSION}" \

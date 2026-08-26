@@ -262,12 +262,12 @@ _slack_version_cell_linked() {
     printf '%s%*s' "${linked}" "${pad}" ""
 }
 
-# Usage: _build_slack_charts_table <manifest_file> [linked] [repo_owner] [gh_token]
+# Usage: _build_slack_charts_table <manifest_file> [linked] [repo_owner]
+# Reads GH_TOKEN from environment when linked=true.
 _build_slack_charts_table() {
     local manifest_file="$1"
     local linked="${2:-false}"
     local repo_owner="${3:-}"
-    local gh_token="${4:-}"
     local -a names=() versions=() urls=()
     local chart_name version display_name url
     local name_w=5 version_w=7
@@ -277,7 +277,7 @@ _build_slack_charts_table() {
         while read -r chart_name version _short_sha _full_sha; do
             [[ -z "${chart_name}" ]] && continue
             display_name=$(_slack_display_name "${chart_name}")
-            url=$(chart_version_url "${chart_name}" "${version}" "${repo_owner}" "${gh_token}")
+            url=$(chart_version_url "${chart_name}" "${version}" "${repo_owner}")
             names+=("${display_name}")
             versions+=("${version}")
             urls+=("${url}")
@@ -355,9 +355,11 @@ stamp_osac_ui_chart() {
     IMAGE_REF="${image_ref}" yq -i '.images.ui = strenv(IMAGE_REF)' "${chart_dir}/values.yaml"
 }
 
-# Usage: chart_version_url <chart_name> <version> <repo_owner> <gh_token>
+# Usage: chart_version_url <chart_name> <version> <repo_owner>
+# Reads GH_TOKEN from environment.
 chart_version_url() {
-    local chart_name="$1" version="$2" repo_owner="$3" gh_token="$4"
+    local chart_name="$1" version="$2" repo_owner="$3"
+    local gh_token="${GH_TOKEN:-}"
     local encoded_version response url
 
     if [[ ! "${chart_name}" =~ ^[a-zA-Z0-9._-]+$ ]]; then
@@ -415,12 +417,13 @@ _osac_ui_source_from_manifest() {
     done < "${manifest_file}"
 }
 
-# Usage: build_slack_charts_published_summary <manifest_file> <repo_owner> <gh_token>
+# Usage: build_slack_charts_published_summary <manifest_file> <repo_owner>
+# Reads GH_TOKEN from environment.
 build_slack_charts_published_summary() {
-    local manifest_file="$1" repo_owner="$2" gh_token="$3"
+    local manifest_file="$1" repo_owner="$2"
     local table ui_source
 
-    table=$(_build_slack_charts_table "${manifest_file}" true "${repo_owner}" "${gh_token}")
+    table=$(_build_slack_charts_table "${manifest_file}" true "${repo_owner}")
 
     # Plain mrkdwn (no code fence): linked version cells use <url|text> markup.
     printf '*Charts published:*\n%s' "${table}"

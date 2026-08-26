@@ -488,7 +488,7 @@ kind delete cluster --name <cluster-name>
 
 Note: The test scripts manage cluster lifecycle automatically. To preserve clusters for debugging, modify `tests/integration/teardown_test_env.sh` directly.
 
-## Cross-Repo Dependencies
+## Cross-Component Dependencies
 
 When making changes that affect other OSAC components:
 
