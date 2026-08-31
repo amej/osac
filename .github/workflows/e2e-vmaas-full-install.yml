@@ -151,6 +151,7 @@ jobs:
       test-infra-ref: ${{ inputs.test-infra-ref || 'main' }}
       # OSAC-3593: Use tests from osac mono-repo instead of osac-test-infra
       test-source: "osac"
+      test-repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
       test-ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
   e2e-vmaas-gate:
