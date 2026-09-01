@@ -8,9 +8,9 @@ from uuid import uuid4
 
 import pytest
 
-from tests.core.grpc_client import PUBLIC_API, GRPCClient
-from tests.core.helpers import assert_grpc_field_violation
-from tests.core.osac_cli import OsacCLI
+from tests.e2e.core.grpc_client import PUBLIC_API, GRPCClient
+from tests.e2e.core.helpers import assert_grpc_field_violation
+from tests.e2e.core.osac_cli import OsacCLI
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +41,7 @@ class TestIAMReferences:
         rb_name = f"ref-rb-{tag}"
 
         try:
-            rb_id = grpc.create_role_binding(
-                name=rb_name, role_name=TENANT_ADMIN_ROLE, user_names=[TENANT_ADMIN_USER]
-            )
+            rb_id = grpc.create_role_binding(name=rb_name, role_name=TENANT_ADMIN_ROLE, user_names=[TENANT_ADMIN_USER])
         except subprocess.CalledProcessError as exc:
             _skip_if_users_not_found(exc)
             raise
@@ -76,9 +74,7 @@ class TestIAMReferences:
             _skip_if_users_not_found(exc)
             raise
         try:
-            response: dict[str, Any] = grpc.call(
-                service=f"{PUBLIC_API}.ProjectMemberships/Get", data={"id": pm_id}
-            )
+            response: dict[str, Any] = grpc.call(service=f"{PUBLIC_API}.ProjectMemberships/Get", data={"id": pm_id})
             spec = response["object"]["spec"]
 
             users = spec["users"]

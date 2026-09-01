@@ -78,12 +78,13 @@ def poll_until(
                 f", last error: {last_error}" if last_error else "",
             )
             last_logged = now
-        time.sleep(delay)
+        if attempt + 1 < retries:
+            time.sleep(delay)
     if last_error is not None:
         raise TimeoutError(
-            f"{description} — timeout after {retries * delay}s, last call failed: {last_error}"
+            f"{description} — timeout after {max(retries - 1, 0) * delay}s, last call failed: {last_error}"
         ) from last_error
-    raise TimeoutError(f"{description} — timeout after {retries * delay}s, last value: {value!r}")
+    raise TimeoutError(f"{description} — timeout after {max(retries - 1, 0) * delay}s, last value: {value!r}")
 
 
 def env(name: str, default: str | None = None) -> str:

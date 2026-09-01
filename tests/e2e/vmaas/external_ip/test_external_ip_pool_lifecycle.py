@@ -6,8 +6,8 @@ from uuid import uuid4
 
 import pytest
 
-from tests.core.grpc_client import GRPCClient
-from tests.core.helpers import (
+from tests.e2e.core.grpc_client import GRPCClient
+from tests.e2e.core.helpers import (
     assert_grpc_rejected,
     wait_for_external_ip_allocated,
     wait_for_external_ip_attachment_cr,
@@ -16,8 +16,8 @@ from tests.core.helpers import (
     wait_for_external_ip_deletion,
     wait_for_external_ip_pool_deletion,
 )
-from tests.core.k8s_client import K8sClient
-from tests.core.runner import poll_until
+from tests.e2e.core.k8s_client import K8sClient
+from tests.e2e.core.runner import poll_until
 
 
 class TestExternalIPPoolLifecycle:
@@ -40,9 +40,7 @@ class TestExternalIPPoolLifecycle:
 
         # --- Attach ExternalIP to ComputeInstance 1 ---
         att_id: str = grpc.create_external_ip_attachment(
-            name=f"test-att-{uuid4().hex[:8]}",
-            external_ip=ip_id,
-            compute_instance=ci1_uuid,
+            name=f"test-att-{uuid4().hex[:8]}", external_ip=ip_id, compute_instance=ci1_uuid
         )
         att_cr_name: str = wait_for_external_ip_attachment_cr(k8s=k8s_hub_client, uuid=att_id)
         wait_for_external_ip_attachment_ready(k8s=k8s_hub_client, name=att_cr_name)
@@ -66,9 +64,7 @@ class TestExternalIPPoolLifecycle:
 
         # --- Re-attach same IP to ComputeInstance 2 ---
         att2_id: str = grpc.create_external_ip_attachment(
-            name=f"test-att-{uuid4().hex[:8]}",
-            external_ip=ip_id,
-            compute_instance=ci2_uuid,
+            name=f"test-att-{uuid4().hex[:8]}", external_ip=ip_id, compute_instance=ci2_uuid
         )
         att2_cr_name: str = wait_for_external_ip_attachment_cr(k8s=k8s_hub_client, uuid=att2_id)
         wait_for_external_ip_attachment_ready(k8s=k8s_hub_client, name=att2_cr_name)
@@ -120,9 +116,7 @@ class TestExternalIPPoolLifecycle:
         fake_ci_uuid: str = str(uuid4())
         with pytest.raises(subprocess.CalledProcessError) as exc_info:
             grpc.create_external_ip_attachment(
-                name=f"test-att-{uuid4().hex[:8]}",
-                external_ip=ip_id,
-                compute_instance=fake_ci_uuid,
+                name=f"test-att-{uuid4().hex[:8]}", external_ip=ip_id, compute_instance=fake_ci_uuid
             )
         assert_grpc_rejected(exc_info, "InvalidArgument")
 
@@ -130,26 +124,20 @@ class TestExternalIPPoolLifecycle:
         fake_ip_uuid: str = str(uuid4())
         with pytest.raises(subprocess.CalledProcessError) as exc_info:
             grpc.create_external_ip_attachment(
-                name=f"test-att-{uuid4().hex[:8]}",
-                external_ip=fake_ip_uuid,
-                compute_instance=ci1_uuid,
+                name=f"test-att-{uuid4().hex[:8]}", external_ip=fake_ip_uuid, compute_instance=ci1_uuid
             )
         assert_grpc_rejected(exc_info, "InvalidArgument")
 
         # Duplicate attachment — attach same ExternalIP twice
         att_id: str = grpc.create_external_ip_attachment(
-            name=f"test-att-{uuid4().hex[:8]}",
-            external_ip=ip_id,
-            compute_instance=ci1_uuid,
+            name=f"test-att-{uuid4().hex[:8]}", external_ip=ip_id, compute_instance=ci1_uuid
         )
         att_cr_name: str = wait_for_external_ip_attachment_cr(k8s=k8s_hub_client, uuid=att_id)
         wait_for_external_ip_attachment_ready(k8s=k8s_hub_client, name=att_cr_name)
 
         with pytest.raises(subprocess.CalledProcessError) as exc_info:
             grpc.create_external_ip_attachment(
-                name=f"test-att-{uuid4().hex[:8]}",
-                external_ip=ip_id,
-                compute_instance=ci1_uuid,
+                name=f"test-att-{uuid4().hex[:8]}", external_ip=ip_id, compute_instance=ci1_uuid
             )
         assert_grpc_rejected(exc_info, "FailedPrecondition")
 

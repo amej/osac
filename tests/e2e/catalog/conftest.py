@@ -3,13 +3,13 @@ from __future__ import annotations
 import logging
 import re
 import subprocess
-from typing import Generator
+from collections.abc import Generator
 from uuid import uuid4
 
 import pytest
 
-from tests.core.grpc_client import GRPCClient
-from tests.core.helpers import (
+from tests.e2e.core.grpc_client import GRPCClient
+from tests.e2e.core.helpers import (
     wait_for_subnet_cr,
     wait_for_subnet_deletion,
     wait_for_subnet_ready,
@@ -17,8 +17,8 @@ from tests.core.helpers import (
     wait_for_virtual_network_deletion,
     wait_for_virtual_network_ready,
 )
-from tests.core.k8s_client import K8sClient
-from tests.core.runner import env
+from tests.e2e.core.k8s_client import K8sClient
+from tests.e2e.core.runner import env
 
 logger = logging.getLogger(__name__)
 
@@ -37,13 +37,7 @@ def compute_instance_template() -> str:
     return env("OSAC_VM_TEMPLATE", "ocp-virt-vm")
 
 
-def _delete_subnet_teardown(
-    grpc: GRPCClient,
-    k8s: K8sClient,
-    *,
-    subnet_id: str,
-    subnet_cr_name: str,
-) -> None:
+def _delete_subnet_teardown(grpc: GRPCClient, k8s: K8sClient, *, subnet_id: str, subnet_cr_name: str) -> None:
     try:
         grpc.delete_subnet(subnet_id=subnet_id)
     except subprocess.CalledProcessError as exc:
@@ -57,13 +51,7 @@ def _delete_subnet_teardown(
         wait_for_subnet_deletion(k8s=k8s, name=subnet_cr_name)
 
 
-def _delete_virtual_network_teardown(
-    grpc: GRPCClient,
-    k8s: K8sClient,
-    *,
-    vn_id: str,
-    vn_cr_name: str,
-) -> None:
+def _delete_virtual_network_teardown(grpc: GRPCClient, k8s: K8sClient, *, vn_id: str, vn_cr_name: str) -> None:
     try:
         grpc.delete_virtual_network(vn_id=vn_id)
     except subprocess.CalledProcessError as exc:
@@ -78,10 +66,7 @@ def _delete_virtual_network_teardown(
 
 
 @pytest.fixture(scope="module")
-def catalog_networking(
-    grpc: GRPCClient,
-    k8s_hub_client: K8sClient,
-) -> Generator[dict[str, str], None, None]:
+def catalog_networking(grpc: GRPCClient, k8s_hub_client: K8sClient) -> Generator[dict[str, str], None, None]:
     """Create VirtualNetwork + Subnet for compute instance catalog item tests."""
     tag = uuid4().hex[:8]
     vn_id: str | None = None
@@ -90,18 +75,11 @@ def catalog_networking(
     subnet_cr_name: str | None = None
 
     try:
-        vn_id = grpc.create_virtual_network(
-            name=f"e2e-cat-vn-{tag}",
-            ipv4_cidr="10.200.0.0/16",
-        )
+        vn_id = grpc.create_virtual_network(name=f"e2e-cat-vn-{tag}", ipv4_cidr="10.200.0.0/16")
         vn_cr_name = wait_for_virtual_network_cr(k8s=k8s_hub_client, uuid=vn_id)
         wait_for_virtual_network_ready(k8s=k8s_hub_client, name=vn_cr_name)
 
-        subnet_id = grpc.create_subnet(
-            name=f"e2e-cat-subnet-{tag}",
-            virtual_network=vn_id,
-            ipv4_cidr="10.200.100.0/24",
-        )
+        subnet_id = grpc.create_subnet(name=f"e2e-cat-subnet-{tag}", virtual_network=vn_id, ipv4_cidr="10.200.100.0/24")
         subnet_cr_name = wait_for_subnet_cr(k8s=k8s_hub_client, uuid=subnet_id)
         wait_for_subnet_ready(k8s=k8s_hub_client, name=subnet_cr_name)
 
@@ -123,19 +101,9 @@ def catalog_networking(
     finally:
         # Normal cleanup runs regardless of setup success/failure
         if subnet_id and subnet_cr_name:
-            _delete_subnet_teardown(
-                grpc,
-                k8s_hub_client,
-                subnet_id=subnet_id,
-                subnet_cr_name=subnet_cr_name,
-            )
+            _delete_subnet_teardown(grpc, k8s_hub_client, subnet_id=subnet_id, subnet_cr_name=subnet_cr_name)
         if vn_id and vn_cr_name:
-            _delete_virtual_network_teardown(
-                grpc,
-                k8s_hub_client,
-                vn_id=vn_id,
-                vn_cr_name=vn_cr_name,
-            )
+            _delete_virtual_network_teardown(grpc, k8s_hub_client, vn_id=vn_id, vn_cr_name=vn_cr_name)
 
 
 @pytest.fixture(scope="module")

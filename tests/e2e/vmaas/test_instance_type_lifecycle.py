@@ -4,8 +4,8 @@ import subprocess
 from typing import Any
 from uuid import uuid4
 
-from tests.core.grpc_client import GRPCClient, PRIVATE_API
-from tests.core.osac_cli import OsacCLI
+from tests.e2e.core.grpc_client import PRIVATE_API, GRPCClient
+from tests.e2e.core.osac_cli import OsacCLI
 
 TEST_CORES: int = 4
 TEST_MEMORY_GIB: int = 8
@@ -13,16 +13,12 @@ TEST_MEMORY_GIB: int = 8
 TEST_GPU: dict[str, Any] = {"pci_device_selector": "10DE:20B0", "resource_name": "nvidia.com/A100", "count": 1}
 
 
-def _assert_state_transition(
-    private_grpc: GRPCClient, it_name: str, target_state: str,
-) -> None:
+def _assert_state_transition(private_grpc: GRPCClient, it_name: str, target_state: str) -> None:
     """Update an InstanceType to *target_state* and verify the transition."""
     private_grpc.update_instance_type(name=it_name, state=target_state)
     response = private_grpc.get_instance_type(name=it_name)
     actual = response["object"]["spec"]["state"]
-    assert actual == target_state, (
-        f"state transition to {target_state}: {actual} != {target_state}"
-    )
+    assert actual == target_state, f"state transition to {target_state}: {actual} != {target_state}"
 
 
 def test_instance_type_lifecycle(cli: OsacCLI, private_grpc: GRPCClient) -> None:
@@ -31,10 +27,7 @@ def test_instance_type_lifecycle(cli: OsacCLI, private_grpc: GRPCClient) -> None
     try:
         # 1. CREATE via private gRPC (admin operation)
         private_grpc.create_instance_type(
-            name=it_name,
-            cores=TEST_CORES,
-            memory_gib=TEST_MEMORY_GIB,
-            description="Lifecycle test type",
+            name=it_name, cores=TEST_CORES, memory_gib=TEST_MEMORY_GIB, description="Lifecycle test type"
         )
         names: list[str] = private_grpc.list_instance_type_names()
         assert it_name in names, f"InstanceType {it_name} not found in list after create: {names}"
@@ -42,18 +35,14 @@ def test_instance_type_lifecycle(cli: OsacCLI, private_grpc: GRPCClient) -> None
         # 2. GET via gRPC (verify API fields)
         response: dict = private_grpc.get_instance_type(name=it_name)
         obj: dict = response["object"]
-        assert obj["spec"]["cores"] == TEST_CORES, (
-            f"spec.cores mismatch: {obj['spec']['cores']} != {TEST_CORES}"
-        )
+        assert obj["spec"]["cores"] == TEST_CORES, f"spec.cores mismatch: {obj['spec']['cores']} != {TEST_CORES}"
         assert obj["spec"]["memoryGib"] == TEST_MEMORY_GIB, (
             f"spec.memoryGib mismatch: {obj['spec']['memoryGib']} != {TEST_MEMORY_GIB}"
         )
         assert obj["spec"]["state"] == "INSTANCE_TYPE_STATE_ACTIVE", (
             f"spec.state mismatch: {obj['spec']['state']} != INSTANCE_TYPE_STATE_ACTIVE"
         )
-        assert obj["metadata"]["name"] == it_name, (
-            f"metadata.name mismatch: {obj['metadata']['name']} != {it_name}"
-        )
+        assert obj["metadata"]["name"] == it_name, f"metadata.name mismatch: {obj['metadata']['name']} != {it_name}"
 
         # Verify CLI describe works
         cli_output = cli.describe_instance_type(name=it_name)
@@ -74,14 +63,12 @@ def test_instance_type_lifecycle(cli: OsacCLI, private_grpc: GRPCClient) -> None
         assert it_name not in names, f"InstanceType {it_name} still in list after delete: {names}"
 
         # 7. NEGATIVE: get after delete should fail
-        output, rc = private_grpc.call_unchecked(
-            service=f"{PRIVATE_API}.InstanceTypes/Get", data={"id": it_name},
-        )
+        output, rc = private_grpc.call_unchecked(service=f"{PRIVATE_API}.InstanceTypes/Get", data={"id": it_name})
         assert rc != 0, f"get after delete should fail, but rc={rc}, output: {output}"
         error_lower = output.lower()
-        assert any(term in error_lower for term in [
-            "not found", "404", "notfound",
-        ]), f"Expected not-found error after delete, got: {output}"
+        assert any(term in error_lower for term in ["not found", "404", "notfound"]), (
+            f"Expected not-found error after delete, got: {output}"
+        )
 
     finally:
         try:
@@ -159,10 +146,7 @@ def test_gpu_instance_type(private_grpc: GRPCClient) -> None:
 
         # 2. LIST: GPU types are distinguishable from non-GPU types
         private_grpc.create_instance_type(
-            name=nogpu_name,
-            cores=TEST_CORES,
-            memory_gib=TEST_MEMORY_GIB,
-            description="Non-GPU lifecycle test type",
+            name=nogpu_name, cores=TEST_CORES, memory_gib=TEST_MEMORY_GIB, description="Non-GPU lifecycle test type"
         )
 
         list_response: dict[str, Any] = private_grpc.call(service=f"{PRIVATE_API}.InstanceTypes/List")
@@ -173,9 +157,7 @@ def test_gpu_instance_type(private_grpc: GRPCClient) -> None:
         assert len(gpu_items) == 1, f"GPU InstanceType {gpu_name} not found in list"
         assert len(nogpu_items) == 1, f"Non-GPU InstanceType {nogpu_name} not found in list"
         assert "gpu" in gpu_items[0]["spec"], f"GPU type should have gpu field: {gpu_items[0]['spec']}"
-        assert "gpu" not in nogpu_items[0]["spec"], (
-            f"Non-GPU type should not have gpu field: {nogpu_items[0]['spec']}"
-        )
+        assert "gpu" not in nogpu_items[0]["spec"], f"Non-GPU type should not have gpu field: {nogpu_items[0]['spec']}"
 
         # 3. IMMUTABILITY: update attempt with different GPU is rejected
         output, rc = private_grpc.call_unchecked(
@@ -184,11 +166,7 @@ def test_gpu_instance_type(private_grpc: GRPCClient) -> None:
                 "object": {
                     "id": gpu_name,
                     "spec": {
-                        "gpu": {
-                            "pci_device_selector": "10DE:2204",
-                            "resource_name": "nvidia.com/A10",
-                            "count": 2,
-                        }
+                        "gpu": {"pci_device_selector": "10DE:2204", "resource_name": "nvidia.com/A10", "count": 2}
                     },
                 }
             },
@@ -197,9 +175,7 @@ def test_gpu_instance_type(private_grpc: GRPCClient) -> None:
         assert "immutable" in output.lower(), f"Expected immutability error, got: {output}"
 
         response = private_grpc.get_instance_type(name=gpu_name)
-        assert response["object"]["spec"]["gpu"] == gpu, (
-            "GPU fields should be unchanged after rejected update"
-        )
+        assert response["object"]["spec"]["gpu"] == gpu, "GPU fields should be unchanged after rejected update"
 
     finally:
         for name in (gpu_name, nogpu_name):

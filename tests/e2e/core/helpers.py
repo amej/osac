@@ -7,9 +7,9 @@ from typing import Any
 
 import pytest
 
-from tests.core.grpc_client import GRPCClient
-from tests.core.k8s_client import K8sClient
-from tests.core.runner import poll_until, run_unchecked
+from tests.e2e.core.grpc_client import GRPCClient
+from tests.e2e.core.k8s_client import K8sClient
+from tests.e2e.core.runner import poll_until, run_unchecked
 
 _POOL_READY_STATE = "EXTERNAL_IP_POOL_STATE_READY"
 
@@ -675,12 +675,7 @@ def wait_for_bmi_running(*, grpc: GRPCClient, bmi_id: str) -> None:
 
 
 def assert_bmi_lifecycle_on_running(
-    *,
-    grpc: GRPCClient,
-    k8s: K8sClient,
-    bmi_id: str,
-    bmh_namespace: str,
-    power_cycle: bool = True,
+    *, grpc: GRPCClient, k8s: K8sClient, bmi_id: str, bmh_namespace: str, power_cycle: bool = True
 ) -> tuple[str, str]:
     """Assert BMH binding/provisioning on an already-RUNNING BMI.
 

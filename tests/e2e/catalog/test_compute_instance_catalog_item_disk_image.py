@@ -5,8 +5,8 @@ import subprocess
 import pytest
 
 from tests.e2e.catalog.conftest import unique_name
-from tests.core.grpc_client import GRPCClient
-from tests.core.helpers import assert_grpc_rejected, wait_for_grpc_removal
+from tests.e2e.core.grpc_client import GRPCClient
+from tests.e2e.core.helpers import assert_grpc_rejected, wait_for_grpc_removal
 
 SOURCE_REF = "quay.io/containerdisks/fedora:41"
 
@@ -76,9 +76,7 @@ def test_disk_image_deletion_protection_catalog_item(grpc: GRPCClient, compute_i
 
         # Same field_definition shape as the default-application test: prefix-less
         # "disk_image" + DiskImage name.
-        field_defs = [
-            {"path": "disk_image", "display_name": "Disk Image", "editable": True, "default": di_name}
-        ]
+        field_defs = [{"path": "disk_image", "display_name": "Disk Image", "editable": True, "default": di_name}]
         catalog_item_id = grpc.create_compute_instance_catalog_item(
             name=unique_name("e2e-cidi-cat"),
             template=compute_instance_template,

@@ -5,13 +5,12 @@ import time
 import pytest
 
 from tests.e2e.catalog.conftest import unique_name
-
-from tests.core.grpc_client import GRPCClient
-from tests.core.helpers import wait_for_cr, wait_for_deletion, wait_for_grpc_removal
-from tests.core.k8s_client import K8sClient
-from tests.core.metering import MeteringCollector
-from tests.core.osac_cli import OsacCLI
-from tests.core.runner import poll_until
+from tests.e2e.core.grpc_client import GRPCClient
+from tests.e2e.core.helpers import wait_for_cr, wait_for_deletion, wait_for_grpc_removal
+from tests.e2e.core.k8s_client import K8sClient
+from tests.e2e.core.metering import MeteringCollector
+from tests.e2e.core.osac_cli import OsacCLI
+from tests.e2e.core.runner import poll_until
 
 TERMINAL_JOB_STATES: tuple[str, ...] = ("Canceled", "Failed", "Succeeded")
 
@@ -20,7 +19,6 @@ def _get_deprovision_status(k8s: K8sClient, *, name: str) -> str:
     if not k8s.is_present(resource="computeinstance", name=name):
         return "cr_deleted"
     return k8s.get_compute_instance_latest_job_state(name=name, job_type="deprovision", checked=False)
-
 
 
 def _wait_for_provision_termination(k8s: K8sClient, *, name: str) -> None:
@@ -68,9 +66,7 @@ def test_compute_instance_delete_during_provision(
 ) -> None:
     name = unique_name("e2e-ci")
     uuid: str = cli.create_compute_instance(
-        name=name,
-        template=vm_template,
-        network_attachments=[{"subnet": default_subnet}],
+        name=name, template=vm_template, network_attachments=[{"subnet": default_subnet}]
     )
     metering.expect("osac.resource.created.v1", resource_id=uuid)
 

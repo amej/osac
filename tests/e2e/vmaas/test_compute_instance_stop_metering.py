@@ -6,18 +6,18 @@ from datetime import UTC, datetime
 import pytest
 
 from tests.e2e.catalog.conftest import unique_name
-from tests.core.grpc_client import GRPCClient
-from tests.core.helpers import (
+from tests.e2e.core.grpc_client import GRPCClient
+from tests.e2e.core.helpers import (
     wait_for_cr,
     wait_for_deletion,
     wait_for_grpc_removal,
     wait_for_provision,
     wait_for_running,
 )
-from tests.core.k8s_client import K8sClient
-from tests.core.metering import MeteringCollector
-from tests.core.osac_cli import OsacCLI
-from tests.core.runner import poll_until
+from tests.e2e.core.k8s_client import K8sClient
+from tests.e2e.core.metering import MeteringCollector
+from tests.e2e.core.osac_cli import OsacCLI
+from tests.e2e.core.runner import poll_until
 
 
 @pytest.mark.metering
@@ -36,9 +36,7 @@ def test_compute_instance_stop_metering(
     """
     name = unique_name("e2e-ci")
     uuid: str = cli.create_compute_instance(
-        name=name,
-        template=vm_template,
-        network_attachments=[{"subnet": default_subnet}],
+        name=name, template=vm_template, network_attachments=[{"subnet": default_subnet}]
     )
 
     ci_name: str = wait_for_cr(k8s=k8s_hub_client, uuid=uuid)
@@ -71,9 +69,7 @@ def test_compute_instance_stop_metering(
         f"Stop from RUNNING should have previous_state=RUNNING, got {suspended_data.get('previous_state')!r}"
     )
     ds = suspended_data.get("duration_seconds")
-    assert isinstance(ds, (int, float)) and ds > 0, (
-        f"Stop from RUNNING should have positive duration_seconds, got {ds}"
-    )
+    assert isinstance(ds, (int, float)) and ds > 0, f"Stop from RUNNING should have positive duration_seconds, got {ds}"
 
     # Verify heartbeats stop after VM becomes non-billable.
     # The heartbeat generator queries the projection DB, which is updated
@@ -82,12 +78,7 @@ def test_compute_instance_stop_metering(
     # interval so in-flight heartbeats drain, then assert silence.
     time.sleep(90)
     no_more_after = datetime.now(UTC).isoformat()
-    metering.assert_no_events(
-        "osac.resource.heartbeat.v1",
-        resource_id=uuid,
-        since=no_more_after,
-        within=90,
-    )
+    metering.assert_no_events("osac.resource.heartbeat.v1", resource_id=uuid, since=no_more_after, within=90)
 
     cli.delete_compute_instance(uuid=uuid)
     metering.expect("osac.resource.deleted.v1", resource_id=uuid)

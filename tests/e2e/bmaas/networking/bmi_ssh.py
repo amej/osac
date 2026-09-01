@@ -70,9 +70,7 @@ def ping(bmc_ip: str, target_ip: str, count: int = 3, wait: int = 3) -> bool:
 
 def curl_status(bmc_ip: str, url: str, timeout: int = 15) -> int:
     output, rc = ssh_bmi_unchecked(
-        bmc_ip,
-        f"curl -s -o /dev/null -w '%{{http_code}}' --connect-timeout {timeout} {url}",
-        timeout=timeout + 30,
+        bmc_ip, f"curl -s -o /dev/null -w '%{{http_code}}' --connect-timeout {timeout} {url}", timeout=timeout + 30
     )
     log.info("curl_status(%s, %s): ssh_rc=%d, output=%r", bmc_ip, url, rc, output[-200:])
     for line in output.strip().splitlines():

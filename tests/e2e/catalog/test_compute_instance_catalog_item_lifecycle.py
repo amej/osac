@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from tests.e2e.catalog.conftest import unique_name
-from tests.core.grpc_client import GRPCClient
-from tests.core.runner import poll_until
+from tests.e2e.core.grpc_client import GRPCClient
+from tests.e2e.core.runner import poll_until
 
 
 def test_compute_instance_catalog_item_crud(grpc: GRPCClient, compute_instance_template: str) -> None:
@@ -59,9 +59,7 @@ def test_unpublished_compute_instance_catalog_item_not_visible_in_public_api(
         grpc.delete_compute_instance_catalog_item(catalog_item_id=catalog_item_id)
 
 
-def test_compute_instance_catalog_item_unpublish_transition(
-    grpc: GRPCClient, compute_instance_template: str
-) -> None:
+def test_compute_instance_catalog_item_unpublish_transition(grpc: GRPCClient, compute_instance_template: str) -> None:
     name = unique_name("e2e-ci-trans")
     catalog_item_id = grpc.create_compute_instance_catalog_item(
         name=name, template=compute_instance_template, published=True
@@ -81,16 +79,9 @@ def test_compute_instance_catalog_item_unpublish_transition(
         grpc.delete_compute_instance_catalog_item(catalog_item_id=catalog_item_id)
 
 
-def test_compute_instance_catalog_item_field_definitions(
-    grpc: GRPCClient, compute_instance_template: str
-) -> None:
+def test_compute_instance_catalog_item_field_definitions(grpc: GRPCClient, compute_instance_template: str) -> None:
     field_defs = [
-        {
-            "path": "spec.instance_type",
-            "display_name": "Instance Type",
-            "editable": True,
-            "default": "standard-2x4",
-        },
+        {"path": "spec.instance_type", "display_name": "Instance Type", "editable": True, "default": "standard-2x4"}
     ]
     name = unique_name("e2e-ci-fd")
     catalog_item_id = grpc.create_compute_instance_catalog_item(
@@ -106,12 +97,7 @@ def test_compute_instance_catalog_item_field_definitions(
         assert it_fd["editable"] is True
 
         updated_fds = [
-            {
-                "path": "spec.instance_type",
-                "display_name": "VM Size",
-                "editable": True,
-                "default": "standard-2x4",
-            },
+            {"path": "spec.instance_type", "display_name": "VM Size", "editable": True, "default": "standard-2x4"}
         ]
         grpc.update_compute_instance_catalog_item(catalog_item_id=catalog_item_id, field_definitions=updated_fds)
 
@@ -122,12 +108,7 @@ def test_compute_instance_catalog_item_field_definitions(
         assert it_fd["displayName"] == "VM Size"
 
         updated_fds_v2 = [
-            {
-                "path": "spec.instance_type",
-                "display_name": "VM Size",
-                "editable": False,
-                "default": "standard-4x8",
-            },
+            {"path": "spec.instance_type", "display_name": "VM Size", "editable": False, "default": "standard-4x8"}
         ]
         grpc.update_compute_instance_catalog_item(catalog_item_id=catalog_item_id, field_definitions=updated_fds_v2)
 

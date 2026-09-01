@@ -4,13 +4,13 @@ import logging
 import os
 import re
 import subprocess
-from typing import Generator
+from collections.abc import Generator
 from uuid import uuid4
 
 import pytest
 
-from tests.core.grpc_client import GRPCClient
-from tests.core.keycloak_admin import (
+from tests.e2e.core.grpc_client import GRPCClient
+from tests.e2e.core.keycloak_admin import (
     get_admin_token,
     wait_for_organization,
     wait_for_project_in_keycloak,
@@ -34,12 +34,7 @@ def unique_name(prefix: str) -> str:
     return f"{prefix}-{uuid4().hex[:8]}"
 
 
-def _delete_project_teardown(
-    grpc: GRPCClient,
-    *,
-    project_id: str,
-    project_name: str,
-) -> None:
+def _delete_project_teardown(grpc: GRPCClient, *, project_id: str, project_name: str) -> None:
     """Delete a project, handling common errors gracefully."""
     try:
         grpc.delete_project(project_id=project_id)
@@ -51,12 +46,7 @@ def _delete_project_teardown(
             logger.warning("Project %s (%s) teardown delete failed: %s", project_name, project_id, combined.strip())
 
 
-def _delete_project_membership_teardown(
-    grpc: GRPCClient,
-    *,
-    membership_id: str,
-    membership_name: str,
-) -> None:
+def _delete_project_membership_teardown(grpc: GRPCClient, *, membership_id: str, membership_name: str) -> None:
     """Delete a project membership, handling common errors gracefully."""
     try:
         grpc.delete_project_membership(membership_id=membership_id)
@@ -72,10 +62,7 @@ def _delete_project_membership_teardown(
 
 @pytest.fixture(scope="function")
 def project_lifecycle_resources(
-    jwt_grpc_tenant1_admin: GRPCClient,
-    keycloak_url: str,
-    keycloak_admin_password: str,
-    skip_keycloak_sync_checks: bool,
+    jwt_grpc_tenant1_admin: GRPCClient, keycloak_url: str, keycloak_admin_password: str, skip_keycloak_sync_checks: bool
 ) -> Generator[dict[str, str | bool], None, None]:
     """
     Create parent project, child project, and project membership for lifecycle tests.
@@ -147,9 +134,7 @@ def project_lifecycle_resources(
         if child_project_id:
             _delete_project_teardown(jwt_grpc_tenant1_admin, project_id=child_project_id, project_name=child_name)
         if parent_project_id:
-            _delete_project_teardown(
-                jwt_grpc_tenant1_admin, project_id=parent_project_id, project_name=parent_name
-            )
+            _delete_project_teardown(jwt_grpc_tenant1_admin, project_id=parent_project_id, project_name=parent_name)
         raise
     finally:
         # Normal cleanup runs regardless of setup success/failure
@@ -177,9 +162,7 @@ def project_lifecycle_resources(
                     logger.warning("Child project %s still exists in Keycloak after deletion", child_name)
 
         if parent_project_id:
-            _delete_project_teardown(
-                jwt_grpc_tenant1_admin, project_id=parent_project_id, project_name=parent_name
-            )
+            _delete_project_teardown(jwt_grpc_tenant1_admin, project_id=parent_project_id, project_name=parent_name)
             # Verify parent removed from Keycloak with polling
             if not skip_keycloak_sync_checks and admin_token and org_id:
                 try:

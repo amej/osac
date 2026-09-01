@@ -21,7 +21,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from tests.e2e.catalog.conftest import unique_name
-from tests.core.helpers import (
+from tests.e2e.core.helpers import (
     wait_for_cluster_deletion,
     wait_for_cluster_order_condition,
     wait_for_cluster_order_cr,
@@ -32,9 +32,9 @@ from tests.core.helpers import (
     wait_for_tenant_cr,
     wait_for_tenant_deletion,
 )
-from tests.core.k8s_client import K8sClient
-from tests.core.osac_cli import OsacCLI
-from tests.core.runner import poll_until
+from tests.e2e.core.k8s_client import K8sClient
+from tests.e2e.core.osac_cli import OsacCLI
+from tests.e2e.core.runner import poll_until
 
 _NAMESPACE_MANIFEST = textwrap.dedent("""\
     apiVersion: v1
@@ -54,11 +54,7 @@ _TENANT_MANIFEST = textwrap.dedent("""\
 
 
 def test_caas_cluster_storage_lifecycle(
-    k8s_hub_client: K8sClient,
-    cli: OsacCLI,
-    cluster_template: str,
-    pull_secret_path: str,
-    ssh_public_key_path: str,
+    k8s_hub_client: K8sClient, cli: OsacCLI, cluster_template: str, pull_secret_path: str, ssh_public_key_path: str
 ) -> None:
     tenant_name: str = f"test-caas-storage-{uuid4().hex[:8]}"
     namespace: str = k8s_hub_client.namespace

@@ -6,8 +6,8 @@ from typing import Any, ClassVar
 import pytest
 
 from tests.e2e.bmaas.networking import bmi_ssh
-from tests.core.grpc_client import GRPCClient
-from tests.core.helpers import (
+from tests.e2e.core.grpc_client import GRPCClient
+from tests.e2e.core.helpers import (
     wait_for_bmh_available,
     wait_for_bmi_cr,
     wait_for_bmi_deletion,
@@ -33,9 +33,9 @@ from tests.core.helpers import (
     wait_for_virtual_network_deletion,
     wait_for_virtual_network_ready,
 )
-from tests.core.k8s_client import K8sClient
-from tests.core.osac_cli import OsacCLI
-from tests.core.runner import poll_until
+from tests.e2e.core.k8s_client import K8sClient
+from tests.e2e.core.osac_cli import OsacCLI
+from tests.e2e.core.runner import poll_until
 
 
 def _require(state: dict[str, Any], *keys: str) -> None:
@@ -57,9 +57,7 @@ class TestBmaasNetworking:
         external_ip_pool_cidr: str,
     ) -> None:
         pool_id = private_grpc.create_external_ip_pool(
-            name=external_ip_pool_name,
-            cidrs=[external_ip_pool_cidr],
-            implementation_strategy="netris",
+            name=external_ip_pool_name, cidrs=[external_ip_pool_cidr], implementation_strategy="netris"
         )
         pool_cr = wait_for_external_ip_pool_cr(k8s=k8s_hub_client, uuid=pool_id)
         wait_for_external_ip_pool_ready(k8s=k8s_hub_client, name=pool_cr)
@@ -70,9 +68,7 @@ class TestBmaasNetworking:
 
     # ── Phase 1: Build the Network ──────────────────────────────────────
 
-    def test_01_create_virtual_network(
-        self, grpc: GRPCClient, k8s_hub_client: K8sClient, net_test_run_id: str
-    ) -> None:
+    def test_01_create_virtual_network(self, grpc: GRPCClient, k8s_hub_client: K8sClient, net_test_run_id: str) -> None:
         name = f"net-{net_test_run_id}"
         vnet_id = grpc.create_virtual_network(name=name, ipv4_cidr="10.100.0.0/16")
         vnet_cr = wait_for_virtual_network_cr(k8s=k8s_hub_client, uuid=vnet_id)
@@ -121,9 +117,7 @@ class TestBmaasNetworking:
 
         self.__class__.state.update(sg_id=sg_id, sg_cr=sg_cr, sg_name=sg_name)
 
-    def test_04_create_nat_gateway(
-        self, grpc: GRPCClient, k8s_hub_client: K8sClient, net_test_run_id: str
-    ) -> None:
+    def test_04_create_nat_gateway(self, grpc: GRPCClient, k8s_hub_client: K8sClient, net_test_run_id: str) -> None:
         _require(self.state, "vnet_name", "pool_id")
 
         nat_eip_name = f"nat-eip-{net_test_run_id}"
@@ -323,9 +317,7 @@ class TestBmaasNetworking:
             description=f"NAT gateway egress curl quay.io (bmc_ip={bmi1['bmc_ip']}, tenant_ip={bmi1['ip']})",
         )
 
-    def test_12_external_ip_ingress(
-        self, grpc: GRPCClient, k8s_hub_client: K8sClient, net_test_run_id: str
-    ) -> None:
+    def test_12_external_ip_ingress(self, grpc: GRPCClient, k8s_hub_client: K8sClient, net_test_run_id: str) -> None:
         _require(self.state, "bmi1", "pool_id")
         bmi1 = self.state["bmi1"]
 
@@ -351,12 +343,8 @@ class TestBmaasNetworking:
             except subprocess.CalledProcessError:
                 return ""
 
-        hostname = poll_until(
-            fn=_try_ssh_eip,
-            until=lambda h: bool(h),
-            retries=5,
-            delay=15,
-            description=f"SSH via external IP {ext_addr}",
+        poll_until(
+            fn=_try_ssh_eip, until=lambda h: bool(h), retries=5, delay=15, description=f"SSH via external IP {ext_addr}"
         )
 
         self.__class__.state.update(

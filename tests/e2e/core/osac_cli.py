@@ -5,7 +5,7 @@ import shutil
 import tempfile
 from typing import Any
 
-from tests.core.runner import run, run_unchecked
+from tests.e2e.core.runner import run, run_unchecked
 
 
 class OsacCLI:
@@ -125,9 +125,7 @@ class OsacCLI:
 
                 storage_tier = disk.get("storage_tier")
                 if storage_tier is None:
-                    raise ValueError(
-                        f"additional_disks[{idx}]: 'storage_tier' is required, got None"
-                    )
+                    raise ValueError(f"additional_disks[{idx}]: 'storage_tier' is required, got None")
 
                 # Build --additional-disk flag value: size=<GiB>,storage-tier=<name>
                 disk_spec = f"size={size},storage-tier={storage_tier}"

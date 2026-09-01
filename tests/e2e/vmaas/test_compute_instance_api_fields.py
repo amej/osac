@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from tests.e2e.catalog.conftest import unique_name
-from tests.core.grpc_client import GRPCClient
-from tests.core.helpers import wait_for_cr, wait_for_deletion, wait_for_provision, wait_for_running
-from tests.core.k8s_client import K8sClient
-from tests.core.osac_cli import OsacCLI
-from tests.core.runner import poll_until
+from tests.e2e.core.grpc_client import GRPCClient
+from tests.e2e.core.helpers import wait_for_cr, wait_for_deletion, wait_for_provision, wait_for_running
+from tests.e2e.core.k8s_client import K8sClient
+from tests.e2e.core.osac_cli import OsacCLI
+from tests.e2e.core.runner import poll_until
 
 TEST_BOOT_DISK_SIZE: int = 20
 TEST_RUN_STRATEGY: str = "Always"
@@ -73,16 +73,12 @@ def test_compute_instance_api_fields(
     assert vm_status == "Running", f"VM should be Running, got {vm_status}"
 
     # Immutability: cores
-    output, rc = k8s_hub_client.patch(
-        resource="computeinstance", name=instance_name, patch='{"spec":{"cores":8}}'
-    )
+    output, rc = k8s_hub_client.patch(resource="computeinstance", name=instance_name, patch='{"spec":{"cores":8}}')
     assert rc != 0, "cores field should be immutable"
     assert "cores is immutable" in output, f"Expected immutability error, got: {output}"
 
     # Immutability: memoryGiB
-    output, rc = k8s_hub_client.patch(
-        resource="computeinstance", name=instance_name, patch='{"spec":{"memoryGiB":16}}'
-    )
+    output, rc = k8s_hub_client.patch(resource="computeinstance", name=instance_name, patch='{"spec":{"memoryGiB":16}}')
     assert rc != 0, "memoryGiB field should be immutable"
     assert "memoryGiB is immutable" in output, f"Expected immutability error, got: {output}"
 

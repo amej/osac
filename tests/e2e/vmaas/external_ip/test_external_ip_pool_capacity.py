@@ -5,10 +5,10 @@ from uuid import uuid4
 
 import pytest
 
-from tests.core.grpc_client import GRPCClient
-from tests.core.helpers import assert_grpc_rejected, wait_for_external_ip_pool_deletion
-from tests.core.k8s_client import K8sClient
-from tests.core.runner import poll_until
+from tests.e2e.core.grpc_client import GRPCClient
+from tests.e2e.core.helpers import assert_grpc_rejected, wait_for_external_ip_pool_deletion
+from tests.e2e.core.k8s_client import K8sClient
+from tests.e2e.core.runner import poll_until
 from tests.e2e.vmaas.external_ip.helpers import create_ip, delete_ip, pool_status
 
 
@@ -20,11 +20,7 @@ class TestPoolCapacity:
     purposeful tradeoff to greatly reduce test execution time.
     """
 
-    def test_capacity_initialized_from_cidr(
-        self,
-        small_pool: tuple[str, str],
-        private_grpc: GRPCClient,
-    ) -> None:
+    def test_capacity_initialized_from_cidr(self, small_pool: tuple[str, str], private_grpc: GRPCClient) -> None:
         pool_id, _ = small_pool
         status = pool_status(private_grpc, pool_id)
         assert status["total"] == 2, f"Expected small pool to have 2 usable IPs, got {status['total']}"
@@ -90,9 +86,7 @@ class TestPoolCapacity:
         assert status["available"] == 0
 
     def test_pool_deletion_blocked_while_ips_allocated(
-        self,
-        small_pool: tuple[str, str],
-        private_grpc: GRPCClient,
+        self, small_pool: tuple[str, str], private_grpc: GRPCClient
     ) -> None:
         pool_id, _ = small_pool
         with pytest.raises(subprocess.CalledProcessError) as exc_info:

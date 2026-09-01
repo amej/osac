@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import pytest
 import logging
 import re
 from typing import Any
 
-from tests.core.grpc_client import GRPCClient
-from tests.core.helpers import (
+import pytest
+
+from tests.e2e.core.grpc_client import GRPCClient
+from tests.e2e.core.helpers import (
     wait_for_bmh_available,
     wait_for_bmh_provisioned,
     wait_for_bmi_cr,
@@ -14,9 +15,9 @@ from tests.core.helpers import (
     wait_for_bmi_grpc_removal,
     wait_for_bmi_running,
 )
-from tests.core.k8s_client import K8sClient
-from tests.core.osac_cli import OsacCLI
-from tests.core.runner import poll_until
+from tests.e2e.core.k8s_client import K8sClient
+from tests.e2e.core.osac_cli import OsacCLI
+from tests.e2e.core.runner import poll_until
 
 logger = logging.getLogger(__name__)
 
@@ -45,8 +46,7 @@ def _assert_nic_metadata(
     cr_macs: set[str] = set(k8s.get_bmi_hardware_nics(name=bmi_cr_name))
     assert cr_macs, f"BareMetalInstance CR {bmi_cr_name} has no status.hardware.nics"
     assert cr_macs == bmh_macs, (
-        f"BMI CR status.hardware.nics {sorted(cr_macs)} does not match "
-        f"BareMetalHost hardware.nics {sorted(bmh_macs)}"
+        f"BMI CR status.hardware.nics {sorted(cr_macs)} does not match BareMetalHost hardware.nics {sorted(bmh_macs)}"
     )
 
     # 3. gRPC API response must match the BMI CR
@@ -64,11 +64,9 @@ def _assert_nic_metadata(
     assert "Network Interfaces:" in describe_output, (
         "osac describe baremetalinstance output missing 'Network Interfaces:' section"
     )
-    ni_section = describe_output[describe_output.index("Network Interfaces:"):]
+    ni_section = describe_output[describe_output.index("Network Interfaces:") :]
     for mac in bmh_macs:
-        assert mac in ni_section, (
-            f"osac describe baremetalinstance 'Network Interfaces:' section missing MAC '{mac}'"
-        )
+        assert mac in ni_section, f"osac describe baremetalinstance 'Network Interfaces:' section missing MAC '{mac}'"
 
 
 def _get_condition_status(grpc: GRPCClient, bmi_id: str, condition_type: str) -> str:

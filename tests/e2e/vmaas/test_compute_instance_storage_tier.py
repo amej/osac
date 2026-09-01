@@ -6,22 +6,14 @@ from typing import Any
 import pytest
 
 from tests.e2e.catalog.conftest import unique_name
-from tests.core.grpc_client import GRPCClient
-from tests.core.helpers import (
-    assert_grpc_rejected,
-    wait_for_cr,
-    wait_for_deletion,
-    wait_for_provision,
-)
-from tests.core.k8s_client import K8sClient
-from tests.core.osac_cli import OsacCLI
+from tests.e2e.core.grpc_client import GRPCClient
+from tests.e2e.core.helpers import assert_grpc_rejected, wait_for_cr, wait_for_deletion, wait_for_provision
+from tests.e2e.core.k8s_client import K8sClient
+from tests.e2e.core.osac_cli import OsacCLI
 
 
 def verify_datavolume_storage_classes(
-    k8s_hub_client: K8sClient,
-    k8s_virt_client: K8sClient,
-    ci_name: str,
-    cr: dict[str, Any],
+    k8s_hub_client: K8sClient, k8s_virt_client: K8sClient, ci_name: str, cr: dict[str, Any]
 ) -> None:
     """Verify that DataVolumes were created with correct StorageClasses.
 
@@ -29,7 +21,7 @@ def verify_datavolume_storage_classes(
     AAP currently uses global _requested_storage_tier and ignores per-disk storageTier fields.
     After PR #257 merges, uncomment the verify_datavolume_storage_classes() calls in tests.
     """
-    vmi_ns = k8s_hub_client.get_compute_instance_vm_namespace(name=ci_name)
+    _ = k8s_hub_client.get_compute_instance_vm_namespace(name=ci_name)
 
     # Verify boot disk
     boot_tier = cr["spec"]["bootDisk"]["storageTier"]
@@ -80,8 +72,7 @@ def test_compute_instance_explicit_boot_disk_tier(
         # Verify CR has the correct storage tier
         cr = k8s_hub_client.get_json(resource="computeinstance", name=ci_name)
         assert cr["spec"]["bootDisk"]["storageTier"] == default_storage_tier, (
-            f"Boot disk tier mismatch: "
-            f"{cr['spec']['bootDisk']['storageTier']!r} != {default_storage_tier!r}"
+            f"Boot disk tier mismatch: {cr['spec']['bootDisk']['storageTier']!r} != {default_storage_tier!r}"
         )
 
         # E2E: Verify DataVolume StorageClass (commented out until osac PR #257)
@@ -151,11 +142,7 @@ def test_compute_instance_multiple_disks_different_tiers(
 
 
 def test_compute_instance_nonexistent_tier_rejected(
-    private_grpc: GRPCClient,
-    vm_template: str,
-    default_subnet: str,
-    default_instance_type: str,
-    default_disk_image: str,
+    private_grpc: GRPCClient, vm_template: str, default_subnet: str, default_instance_type: str, default_disk_image: str
 ) -> None:
     """Verify that requesting a nonexistent storage tier returns INVALID_ARGUMENT."""
     nonexistent_tier = f"nonexistent-tier-{unique_name('test')}"
@@ -180,9 +167,9 @@ def test_compute_instance_nonexistent_tier_rejected(
 
     assert_grpc_rejected(exc_info, "InvalidArgument")
     error_lower = str(exc_info.value.stderr).lower()
-    assert any(term in error_lower for term in [
-        "not found", "does not exist", "notfound",
-    ]), f"Expected not-found/does-not-exist error, got: {exc_info.value.stderr}"
+    assert any(term in error_lower for term in ["not found", "does not exist", "notfound"]), (
+        f"Expected not-found/does-not-exist error, got: {exc_info.value.stderr}"
+    )
 
 
 def test_compute_instance_tier_immutability(
@@ -227,21 +214,16 @@ def test_compute_instance_tier_immutability(
 
         # Attempt to update the storage tier via K8s
         import json
+
         patch_json = json.dumps({"spec": {"bootDisk": {"storageTier": fast_tier}}})
-        output, rc = k8s_hub_client.patch(
-            resource="computeinstance",
-            name=ci_name,
-            patch=patch_json,
-        )
+        output, rc = k8s_hub_client.patch(resource="computeinstance", name=ci_name, patch=patch_json)
 
         # Verify patch was rejected
         assert rc != 0, "storage tier should be immutable"
 
         # Verify error mentions immutability
         error_output = output.lower()
-        assert "immutable" in error_output or "invalid" in error_output, (
-            f"Expected immutability error, got: {output}"
-        )
+        assert "immutable" in error_output or "invalid" in error_output, f"Expected immutability error, got: {output}"
     finally:
         grpc.delete_compute_instance(ci_id=uuid)
         if ci_name is not None:
@@ -252,11 +234,7 @@ def test_compute_instance_tier_immutability(
     reason="Requires mandatory storage_tier validation (follow-up osac PR after this test infrastructure lands)"
 )
 def test_compute_instance_boot_disk_tier_required(
-    private_grpc: GRPCClient,
-    vm_template: str,
-    default_subnet: str,
-    default_instance_type: str,
-    default_disk_image: str,
+    private_grpc: GRPCClient, vm_template: str, default_subnet: str, default_instance_type: str, default_disk_image: str
 ) -> None:
     """Verify that missing boot disk tier returns INVALID_ARGUMENT.
 
@@ -343,37 +321,14 @@ def test_compute_instance_boot_disk_tier_from_catalog_item_default(
             "editable": True,
             "default": default_storage_tier,
         },
-        {
-            "path": "boot_disk.size_gib",
-            "display_name": "Boot Disk Size",
-            "editable": True,
-        },
-        {
-            "path": "network_attachments",
-            "display_name": "Network Attachments",
-            "editable": True,
-        },
-        {
-            "path": "disk_image",
-            "display_name": "Disk Image",
-            "editable": True,
-        },
-        {
-            "path": "instance_type",
-            "display_name": "Instance Type",
-            "editable": True,
-        },
-        {
-            "path": "run_strategy",
-            "display_name": "Run Strategy",
-            "editable": True,
-        },
+        {"path": "boot_disk.size_gib", "display_name": "Boot Disk Size", "editable": True},
+        {"path": "network_attachments", "display_name": "Network Attachments", "editable": True},
+        {"path": "disk_image", "display_name": "Disk Image", "editable": True},
+        {"path": "instance_type", "display_name": "Instance Type", "editable": True},
+        {"path": "run_strategy", "display_name": "Run Strategy", "editable": True},
     ]
     catalog_item_id = private_grpc.create_compute_instance_catalog_item(
-        name=unique_name("e2e-cat-tier"),
-        template=vm_template,
-        published=True,
-        field_definitions=field_defs,
+        name=unique_name("e2e-cat-tier"), template=vm_template, published=True, field_definitions=field_defs
     )
 
     try:
@@ -465,37 +420,14 @@ def test_compute_instance_user_tier_overrides_catalog_item_default(
             "editable": True,
             "default": default_storage_tier,
         },
-        {
-            "path": "boot_disk.size_gib",
-            "display_name": "Boot Disk Size",
-            "editable": True,
-        },
-        {
-            "path": "network_attachments",
-            "display_name": "Network Attachments",
-            "editable": True,
-        },
-        {
-            "path": "disk_image",
-            "display_name": "Disk Image",
-            "editable": True,
-        },
-        {
-            "path": "instance_type",
-            "display_name": "Instance Type",
-            "editable": True,
-        },
-        {
-            "path": "run_strategy",
-            "display_name": "Run Strategy",
-            "editable": True,
-        },
+        {"path": "boot_disk.size_gib", "display_name": "Boot Disk Size", "editable": True},
+        {"path": "network_attachments", "display_name": "Network Attachments", "editable": True},
+        {"path": "disk_image", "display_name": "Disk Image", "editable": True},
+        {"path": "instance_type", "display_name": "Instance Type", "editable": True},
+        {"path": "run_strategy", "display_name": "Run Strategy", "editable": True},
     ]
     catalog_item_id = private_grpc.create_compute_instance_catalog_item(
-        name=unique_name("e2e-cat-override"),
-        template=vm_template,
-        published=True,
-        field_definitions=field_defs,
+        name=unique_name("e2e-cat-override"), template=vm_template, published=True, field_definitions=field_defs
     )
 
     try:
@@ -566,42 +498,15 @@ def test_compute_instance_explicit_additional_disks_without_catalog_item_default
             "editable": True,
             "default": default_storage_tier,
         },
-        {
-            "path": "boot_disk.size_gib",
-            "display_name": "Boot Disk Size",
-            "editable": True,
-        },
-        {
-            "path": "additional_disks",
-            "display_name": "Additional Disks",
-            "editable": True,
-        },
-        {
-            "path": "network_attachments",
-            "display_name": "Network Attachments",
-            "editable": True,
-        },
-        {
-            "path": "disk_image",
-            "display_name": "Disk Image",
-            "editable": True,
-        },
-        {
-            "path": "instance_type",
-            "display_name": "Instance Type",
-            "editable": True,
-        },
-        {
-            "path": "run_strategy",
-            "display_name": "Run Strategy",
-            "editable": True,
-        },
+        {"path": "boot_disk.size_gib", "display_name": "Boot Disk Size", "editable": True},
+        {"path": "additional_disks", "display_name": "Additional Disks", "editable": True},
+        {"path": "network_attachments", "display_name": "Network Attachments", "editable": True},
+        {"path": "disk_image", "display_name": "Disk Image", "editable": True},
+        {"path": "instance_type", "display_name": "Instance Type", "editable": True},
+        {"path": "run_strategy", "display_name": "Run Strategy", "editable": True},
     ]
     catalog_item_id = private_grpc.create_compute_instance_catalog_item(
-        name=unique_name("e2e-cat-no-add-def"),
-        template=vm_template,
-        published=True,
-        field_definitions=field_defs,
+        name=unique_name("e2e-cat-no-add-def"), template=vm_template, published=True, field_definitions=field_defs
     )
 
     try:
@@ -678,42 +583,15 @@ def test_compute_instance_additional_disks_from_catalog_item_default(
             "editable": True,
             "default": [{"size_gib": 10, "storage_tier": fast_tier}],
         },
-        {
-            "path": "boot_disk.size_gib",
-            "display_name": "Boot Disk Size",
-            "editable": True,
-        },
-        {
-            "path": "boot_disk.storage_tier",
-            "display_name": "Boot Disk Storage Tier",
-            "editable": True,
-        },
-        {
-            "path": "network_attachments",
-            "display_name": "Network Attachments",
-            "editable": True,
-        },
-        {
-            "path": "disk_image",
-            "display_name": "Disk Image",
-            "editable": True,
-        },
-        {
-            "path": "instance_type",
-            "display_name": "Instance Type",
-            "editable": True,
-        },
-        {
-            "path": "run_strategy",
-            "display_name": "Run Strategy",
-            "editable": True,
-        },
+        {"path": "boot_disk.size_gib", "display_name": "Boot Disk Size", "editable": True},
+        {"path": "boot_disk.storage_tier", "display_name": "Boot Disk Storage Tier", "editable": True},
+        {"path": "network_attachments", "display_name": "Network Attachments", "editable": True},
+        {"path": "disk_image", "display_name": "Disk Image", "editable": True},
+        {"path": "instance_type", "display_name": "Instance Type", "editable": True},
+        {"path": "run_strategy", "display_name": "Run Strategy", "editable": True},
     ]
     catalog_item_id = private_grpc.create_compute_instance_catalog_item(
-        name=unique_name("e2e-cat-add-disks"),
-        template=vm_template,
-        published=True,
-        field_definitions=field_defs,
+        name=unique_name("e2e-cat-add-disks"), template=vm_template, published=True, field_definitions=field_defs
     )
 
     try:
@@ -785,42 +663,15 @@ def test_compute_instance_user_additional_disks_override_catalog_item_default(
             "editable": True,
             "default": [{"size_gib": 10, "storage_tier": fast_tier}],
         },
-        {
-            "path": "boot_disk.size_gib",
-            "display_name": "Boot Disk Size",
-            "editable": True,
-        },
-        {
-            "path": "boot_disk.storage_tier",
-            "display_name": "Boot Disk Storage Tier",
-            "editable": True,
-        },
-        {
-            "path": "network_attachments",
-            "display_name": "Network Attachments",
-            "editable": True,
-        },
-        {
-            "path": "disk_image",
-            "display_name": "Disk Image",
-            "editable": True,
-        },
-        {
-            "path": "instance_type",
-            "display_name": "Instance Type",
-            "editable": True,
-        },
-        {
-            "path": "run_strategy",
-            "display_name": "Run Strategy",
-            "editable": True,
-        },
+        {"path": "boot_disk.size_gib", "display_name": "Boot Disk Size", "editable": True},
+        {"path": "boot_disk.storage_tier", "display_name": "Boot Disk Storage Tier", "editable": True},
+        {"path": "network_attachments", "display_name": "Network Attachments", "editable": True},
+        {"path": "disk_image", "display_name": "Disk Image", "editable": True},
+        {"path": "instance_type", "display_name": "Instance Type", "editable": True},
+        {"path": "run_strategy", "display_name": "Run Strategy", "editable": True},
     ]
     catalog_item_id = private_grpc.create_compute_instance_catalog_item(
-        name=unique_name("e2e-cat-add-override"),
-        template=vm_template,
-        published=True,
-        field_definitions=field_defs,
+        name=unique_name("e2e-cat-add-override"), template=vm_template, published=True, field_definitions=field_defs
     )
 
     try:
@@ -896,42 +747,15 @@ def test_compute_instance_empty_additional_disks_opts_out_of_catalog_item_defaul
             "editable": True,
             "default": [{"size_gib": 10, "storage_tier": fast_tier}],
         },
-        {
-            "path": "boot_disk.size_gib",
-            "display_name": "Boot Disk Size",
-            "editable": True,
-        },
-        {
-            "path": "boot_disk.storage_tier",
-            "display_name": "Boot Disk Storage Tier",
-            "editable": True,
-        },
-        {
-            "path": "network_attachments",
-            "display_name": "Network Attachments",
-            "editable": True,
-        },
-        {
-            "path": "disk_image",
-            "display_name": "Disk Image",
-            "editable": True,
-        },
-        {
-            "path": "instance_type",
-            "display_name": "Instance Type",
-            "editable": True,
-        },
-        {
-            "path": "run_strategy",
-            "display_name": "Run Strategy",
-            "editable": True,
-        },
+        {"path": "boot_disk.size_gib", "display_name": "Boot Disk Size", "editable": True},
+        {"path": "boot_disk.storage_tier", "display_name": "Boot Disk Storage Tier", "editable": True},
+        {"path": "network_attachments", "display_name": "Network Attachments", "editable": True},
+        {"path": "disk_image", "display_name": "Disk Image", "editable": True},
+        {"path": "instance_type", "display_name": "Instance Type", "editable": True},
+        {"path": "run_strategy", "display_name": "Run Strategy", "editable": True},
     ]
     catalog_item_id = private_grpc.create_compute_instance_catalog_item(
-        name=unique_name("e2e-cat-add-empty"),
-        template=vm_template,
-        published=True,
-        field_definitions=field_defs,
+        name=unique_name("e2e-cat-add-empty"), template=vm_template, published=True, field_definitions=field_defs
     )
 
     try:

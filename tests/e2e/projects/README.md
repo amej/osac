@@ -23,7 +23,7 @@ Full lifecycle test that validates:
 
 - **Keycloak**: Must be accessible for organization/group verification
 - **Multiple Tenants**: tenant1 and tenant2 must exist
-- **JWT Authentication**: tenant1_admin, tenant1_user, tenant2_user must be configured
+- **JWT Authentication**: tenant1_admin, tenant1_user, tenant2_admin, tenant2_user must be configured
 - **Environment Variables**:
   - `OSAC_KEYCLOAK_URL`: Keycloak base URL
   - `OSAC_KEYCLOAK_ADMIN_PASSWORD`: Keycloak admin password (default: "admin")

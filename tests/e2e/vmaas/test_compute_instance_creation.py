@@ -3,18 +3,17 @@ from __future__ import annotations
 import pytest
 
 from tests.e2e.catalog.conftest import unique_name
-
-from tests.core.grpc_client import GRPCClient
-from tests.core.helpers import (
+from tests.e2e.core.grpc_client import GRPCClient
+from tests.e2e.core.helpers import (
     wait_for_cr,
     wait_for_deletion,
     wait_for_grpc_removal,
     wait_for_provision,
     wait_for_running,
 )
-from tests.core.k8s_client import K8sClient
-from tests.core.metering import MeteringCollector
-from tests.core.osac_cli import OsacCLI
+from tests.e2e.core.k8s_client import K8sClient
+from tests.e2e.core.metering import MeteringCollector
+from tests.e2e.core.osac_cli import OsacCLI
 
 
 @pytest.mark.metering
@@ -29,9 +28,7 @@ def test_compute_instance_lifecycle(
 ) -> None:
     name = unique_name("e2e-ci")
     uuid: str = cli.create_compute_instance(
-        name=name,
-        template=vm_template,
-        network_attachments=[{"subnet": default_subnet}],
+        name=name, template=vm_template, network_attachments=[{"subnet": default_subnet}]
     )
     metering.expect("osac.resource.created.v1", resource_id=uuid)
 
@@ -48,8 +45,7 @@ def test_compute_instance_lifecycle(
     created_event = metering.get_event("osac.resource.created.v1", resource_id=uuid)
     bd = created_event.get("data", {}).get("billing_dimensions", {})
     assert bd.get("instance_type") == cli.default_instance_type, (
-        f"billing_dimensions.instance_type mismatch: "
-        f"{bd.get('instance_type')!r} != {cli.default_instance_type!r}"
+        f"billing_dimensions.instance_type mismatch: {bd.get('instance_type')!r} != {cli.default_instance_type!r}"
     )
 
     # Verify VM exists on virt cluster

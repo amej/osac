@@ -9,10 +9,10 @@ from uuid import uuid4
 
 import pytest
 
-from tests.core.grpc_client import PRIVATE_API, PUBLIC_API, GRPCClient
-from tests.core.helpers import assert_grpc_field_violation
-from tests.core.osac_cli import OsacCLI
-from tests.core.runner import env
+from tests.e2e.core.grpc_client import PRIVATE_API, PUBLIC_API, GRPCClient
+from tests.e2e.core.helpers import assert_grpc_field_violation
+from tests.e2e.core.osac_cli import OsacCLI
+from tests.e2e.core.runner import env
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +160,11 @@ class TestClusterBareMetalReferences:
                 logger.warning("Failed to cleanup BMI catalog item %s", cat_id)
 
     def test_cross_tenant_cluster_template_reference(
-        self, private_grpc: GRPCClient, jwt_grpc_tenant1: GRPCClient, jwt_cli_user: OsacCLI, cluster_template: str,
+        self,
+        private_grpc: GRPCClient,
+        jwt_grpc_tenant1: GRPCClient,
+        jwt_cli_user: OsacCLI,
+        cluster_template: str,
         cluster_version: str,
     ):
         tag = uuid4().hex[:8]

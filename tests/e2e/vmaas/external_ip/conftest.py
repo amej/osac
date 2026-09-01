@@ -8,8 +8,8 @@ from uuid import uuid4
 import pytest
 
 from tests.e2e.catalog.conftest import unique_name
-from tests.core.grpc_client import GRPCClient
-from tests.core.helpers import (
+from tests.e2e.core.grpc_client import GRPCClient
+from tests.e2e.core.helpers import (
     wait_for_cr,
     wait_for_deletion,
     wait_for_external_ip_attachment_deletion,
@@ -20,17 +20,15 @@ from tests.core.helpers import (
     wait_for_external_ip_pool_ready,
     wait_for_running,
 )
-from tests.core.k8s_client import K8sClient
-from tests.core.osac_cli import OsacCLI
+from tests.e2e.core.k8s_client import K8sClient
+from tests.e2e.core.osac_cli import OsacCLI
 from tests.e2e.vmaas.external_ip.helpers import allocate_worker_subnet, create_ip
 
 logger = logging.getLogger(__name__)
 
 
 @pytest.fixture(scope="class")
-def make_pool(
-    grpc: GRPCClient, private_grpc: GRPCClient, k8s_hub_client: K8sClient
-) -> Generator[..., None, None]:
+def make_pool(grpc: GRPCClient, private_grpc: GRPCClient, k8s_hub_client: K8sClient) -> Generator[..., None, None]:
     created: list[tuple[str, str]] = []
 
     def _make(*, prefix: int = 24, name_prefix: str = "test-pool") -> tuple[str, str]:
@@ -135,10 +133,7 @@ def external_ip(
 
 @pytest.fixture(scope="class")
 def make_compute_instances(
-    cli: OsacCLI,
-    k8s_hub_client: K8sClient,
-    vm_template: str,
-    default_subnet: str,
+    cli: OsacCLI, k8s_hub_client: K8sClient, vm_template: str, default_subnet: str
 ) -> Generator[Callable[..., tuple[tuple[str, str], ...]], None, None]:
     created: list[tuple[str, str]] = []
 
@@ -147,9 +142,7 @@ def make_compute_instances(
         for _ in range(count):
             name = unique_name("e2e-ci")
             uuid = cli.create_compute_instance(
-                name=name,
-                template=vm_template,
-                network_attachments=[{"subnet": default_subnet}],
+                name=name, template=vm_template, network_attachments=[{"subnet": default_subnet}]
             )
             name = wait_for_cr(k8s=k8s_hub_client, uuid=uuid)
             created.append((uuid, name))

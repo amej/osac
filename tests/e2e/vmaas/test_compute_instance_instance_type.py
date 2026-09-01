@@ -2,40 +2,42 @@ from __future__ import annotations
 
 import re
 import subprocess
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 from uuid import uuid4
 
 import pytest
 
 from tests.e2e.catalog.conftest import unique_name
-from tests.core.grpc_client import GRPCClient
-from tests.core.helpers import wait_for_cr, wait_for_deletion
-from tests.core.k8s_client import K8sClient
-from tests.core.osac_cli import OsacCLI
-from tests.core.runner import run_unchecked
+from tests.e2e.core.grpc_client import GRPCClient
+from tests.e2e.core.helpers import wait_for_cr, wait_for_deletion
+from tests.e2e.core.k8s_client import K8sClient
+from tests.e2e.core.osac_cli import OsacCLI
+from tests.e2e.core.runner import run_unchecked
 
 IT_CORES: int = 2
 IT_MEMORY_GIB: int = 4
 
 
 def _build_create_ci_args(
-    cli: OsacCLI,
-    vm_template: str,
-    default_subnet: str,
-    it_name: str,
-    disk_image: str,
-    ci_name: str | None = None,
+    cli: OsacCLI, vm_template: str, default_subnet: str, it_name: str, disk_image: str, ci_name: str | None = None
 ) -> list[str]:
     args = [cli.binary, "--config", cli.config_dir, "create", "computeinstance"]
     if ci_name is not None:
         args += ["--name", ci_name]
     args += [
-        "--template", vm_template,
-        "--network-attachment", f"subnet={default_subnet}",
-        "--instance-type", it_name,
-        "--boot-disk-size", "20",
-        "--disk-image", disk_image,
-        "--run-strategy", "Always",
+        "--template",
+        vm_template,
+        "--network-attachment",
+        f"subnet={default_subnet}",
+        "--instance-type",
+        it_name,
+        "--boot-disk-size",
+        "20",
+        "--disk-image",
+        disk_image,
+        "--run-strategy",
+        "Always",
     ]
     return args
 
@@ -45,10 +47,7 @@ def active_instance_type(private_grpc: GRPCClient) -> Iterator[str]:
     """Create an ACTIVE instance type for testing; clean up after."""
     it_name = f"e2e-ci-it-{uuid4().hex[:8]}"
     private_grpc.create_instance_type(
-        name=it_name,
-        cores=IT_CORES,
-        memory_gib=IT_MEMORY_GIB,
-        description="E2E compute instance test type",
+        name=it_name, cores=IT_CORES, memory_gib=IT_MEMORY_GIB, description="E2E compute instance test type"
     )
     yield it_name
     try:
@@ -78,9 +77,7 @@ def test_compute_instance_happy_path(
             network_attachments=[{"subnet": default_subnet}],
             instance_type=active_instance_type,
         )
-        assert ci_uuid in grpc.list_compute_instance_ids(), (
-            f"ComputeInstance {ci_uuid} not found in list after create"
-        )
+        assert ci_uuid in grpc.list_compute_instance_ids(), f"ComputeInstance {ci_uuid} not found in list after create"
 
         # Wait for CR and verify reconciler expansion
         ci_name = wait_for_cr(k8s=k8s_hub_client, uuid=ci_uuid)
@@ -126,19 +123,17 @@ def test_compute_instance_deletion_protection(
             network_attachments=[{"subnet": default_subnet}],
             instance_type=active_instance_type,
         )
-        assert ci_uuid in grpc.list_compute_instance_ids(), (
-            f"ComputeInstance {ci_uuid} not found in list after create"
-        )
+        assert ci_uuid in grpc.list_compute_instance_ids(), f"ComputeInstance {ci_uuid} not found in list after create"
         ci_name = wait_for_cr(k8s=k8s_hub_client, uuid=ci_uuid)
 
         output, rc = run_unchecked(
-            private_cli.binary, "--config", private_cli.config_dir, "delete", "instancetype", active_instance_type,
+            private_cli.binary, "--config", private_cli.config_dir, "delete", "instancetype", active_instance_type
         )
         assert rc != 0, "delete should be rejected when ComputeInstance references instance type"
         error_lower = output.lower()
-        assert any(term in error_lower for term in [
-            "409", "conflict", "referenced", "failedprecondition", "in use",
-        ]), f"Expected conflict/reference error, got: {output}"
+        assert any(term in error_lower for term in ["409", "conflict", "referenced", "failedprecondition", "in use"]), (
+            f"Expected conflict/reference error, got: {output}"
+        )
     finally:
         if ci_uuid is not None:
             cli.delete_compute_instance(uuid=ci_uuid)
@@ -159,15 +154,17 @@ def test_compute_instance_deprecated_warning(
     deprecated_ci_name: str | None = None
 
     try:
-        private_grpc.update_instance_type(
-            name=active_instance_type, state="INSTANCE_TYPE_STATE_DEPRECATED",
-        )
+        private_grpc.update_instance_type(name=active_instance_type, state="INSTANCE_TYPE_STATE_DEPRECATED")
 
         dep_output, dep_rc = run_unchecked(
             *_build_create_ci_args(
-                cli, vm_template, default_subnet, active_instance_type, default_disk_image,
+                cli,
+                vm_template,
+                default_subnet,
+                active_instance_type,
+                default_disk_image,
                 ci_name=unique_name("e2e-ci"),
-            ),
+            )
         )
         assert dep_rc == 0, f"create with DEPRECATED type should succeed, got: {dep_output}"
         assert "deprecat" in dep_output.lower() or "warning" in dep_output.lower(), (
@@ -186,18 +183,12 @@ def test_compute_instance_deprecated_warning(
 
 
 def test_compute_instance_nonexistent_instance_type(
-    cli: OsacCLI,
-    k8s_hub_client: K8sClient,
-    default_subnet: str,
-    vm_template: str,
-    default_disk_image: str,
+    cli: OsacCLI, k8s_hub_client: K8sClient, default_subnet: str, vm_template: str, default_disk_image: str
 ) -> None:
     missing_it_name = f"nonexistent-it-{uuid4().hex[:8]}"
     ci_name = f"e2e-neg-{uuid4().hex[:8]}"
     output, rc = run_unchecked(
-        *_build_create_ci_args(
-            cli, vm_template, default_subnet, missing_it_name, default_disk_image, ci_name=ci_name,
-        ),
+        *_build_create_ci_args(cli, vm_template, default_subnet, missing_it_name, default_disk_image, ci_name=ci_name)
     )
     if rc == 0:
         uuid_match = re.search(r"'([^']+)'", output)
@@ -207,14 +198,12 @@ def test_compute_instance_nonexistent_instance_type(
             cli.delete_compute_instance(uuid=ci_uuid)
             wait_for_deletion(k8s=k8s_hub_client, name=cr_name)
         elif k8s_hub_client.is_present(resource="computeinstance", name=ci_name):
-            pytest.fail(
-                f"ComputeInstance CR {ci_name} leaked but UUID could not be parsed from output: {output}"
-            )
+            pytest.fail(f"ComputeInstance CR {ci_name} leaked but UUID could not be parsed from output: {output}")
     assert rc != 0, f"create with nonexistent instance type should fail, got: {output}"
     error_lower = output.lower()
-    assert any(term in error_lower for term in [
-        "not found", "404", "notfound",
-    ]), f"Expected not-found error, got: {output}"
+    assert any(term in error_lower for term in ["not found", "404", "notfound"]), (
+        f"Expected not-found error, got: {output}"
+    )
 
 
 def test_compute_instance_obsolete_instance_type(
@@ -226,18 +215,14 @@ def test_compute_instance_obsolete_instance_type(
     active_instance_type: str,
     default_disk_image: str,
 ) -> None:
-    private_grpc.update_instance_type(
-        name=active_instance_type, state="INSTANCE_TYPE_STATE_DEPRECATED",
-    )
-    private_grpc.update_instance_type(
-        name=active_instance_type, state="INSTANCE_TYPE_STATE_OBSOLETE",
-    )
+    private_grpc.update_instance_type(name=active_instance_type, state="INSTANCE_TYPE_STATE_DEPRECATED")
+    private_grpc.update_instance_type(name=active_instance_type, state="INSTANCE_TYPE_STATE_OBSOLETE")
 
     ci_name = f"e2e-obs-{uuid4().hex[:8]}"
     output, rc = run_unchecked(
         *_build_create_ci_args(
-            cli, vm_template, default_subnet, active_instance_type, default_disk_image, ci_name=ci_name,
-        ),
+            cli, vm_template, default_subnet, active_instance_type, default_disk_image, ci_name=ci_name
+        )
     )
     if rc == 0:
         uuid_match = re.search(r"'([^']+)'", output)
@@ -247,11 +232,9 @@ def test_compute_instance_obsolete_instance_type(
             cli.delete_compute_instance(uuid=ci_uuid)
             wait_for_deletion(k8s=k8s_hub_client, name=cr_name)
         elif k8s_hub_client.is_present(resource="computeinstance", name=ci_name):
-            pytest.fail(
-                f"ComputeInstance CR {ci_name} leaked but UUID could not be parsed from output: {output}"
-            )
+            pytest.fail(f"ComputeInstance CR {ci_name} leaked but UUID could not be parsed from output: {output}")
     assert rc != 0, f"create with OBSOLETE instance type should be rejected, got: {output}"
     error_lower = output.lower()
-    assert any(term in error_lower for term in [
-        "obsolete", "rejected", "failedprecondition", "409", "conflict",
-    ]), f"Expected rejection error for obsolete instance type, got: {output}"
+    assert any(term in error_lower for term in ["obsolete", "rejected", "failedprecondition", "409", "conflict"]), (
+        f"Expected rejection error for obsolete instance type, got: {output}"
+    )

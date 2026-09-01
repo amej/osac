@@ -9,10 +9,10 @@ from pathlib import Path
 
 import pytest
 
-from tests.core.grpc_client import PRIVATE_API, GRPCClient
-from tests.core.k8s_client import K8sClient
-from tests.core.keycloak import get_jwt
-from tests.core.keycloak_admin import (
+from tests.e2e.core.grpc_client import PRIVATE_API, GRPCClient
+from tests.e2e.core.k8s_client import K8sClient
+from tests.e2e.core.keycloak import get_jwt
+from tests.e2e.core.keycloak_admin import (
     add_user_to_organization,
     add_user_to_organization_group,
     ensure_organization_group,
@@ -20,9 +20,9 @@ from tests.core.keycloak_admin import (
     get_user_id,
     wait_for_organization,
 )
-from tests.core.metering import MeteringCollector
-from tests.core.osac_cli import OsacCLI
-from tests.core.runner import env, run
+from tests.e2e.core.metering import MeteringCollector
+from tests.e2e.core.osac_cli import OsacCLI
+from tests.e2e.core.runner import env, run
 
 
 @pytest.fixture(scope="session")
@@ -153,9 +153,7 @@ def keycloak_admin_password() -> str:
 
 
 @pytest.fixture(scope="session", autouse=True)
-def setup_organization_memberships(
-    ensure_tenants: None, keycloak_url: str, keycloak_admin_password: str
-) -> None:
+def setup_organization_memberships(ensure_tenants: None, keycloak_url: str, keycloak_admin_password: str) -> None:
     """
     Add test users to their corresponding Keycloak organizations.
     This runs after ensure_tenants creates the Tenant resources, which the
@@ -165,10 +163,7 @@ def setup_organization_memberships(
     admin_token = get_admin_token(keycloak_url=keycloak_url, username="admin", password=keycloak_admin_password)
 
     # Map of organization name -> list of usernames
-    org_users = {
-        "tenant1": ["tenant1_user", "tenant1_admin"],
-        "tenant2": ["tenant2_user", "tenant2_admin"],
-    }
+    org_users = {"tenant1": ["tenant1_user", "tenant1_admin"], "tenant2": ["tenant2_user", "tenant2_admin"]}
 
     for org_name, usernames in org_users.items():
         # Wait for the organization to be synced to Keycloak by the tenant controller
@@ -247,7 +242,9 @@ def ensure_k8s_only_network_class(private_grpc: GRPCClient, k8s_hub_client: K8sC
 
 
 @pytest.fixture(scope="session")
-def cli(namespace: str, fulfillment_address: str, keycloak_url: str, jwt_username: str, jwt_password: str) -> Iterator[OsacCLI]:  # noqa: E501
+def cli(
+    namespace: str, fulfillment_address: str, keycloak_url: str, jwt_username: str, jwt_password: str
+) -> Iterator[OsacCLI]:  # noqa: E501
     instance = OsacCLI(
         binary=env("OSAC_CLI_PATH", "osac"),
         address=f"https://{fulfillment_address.rsplit(':', 1)[0]}",

@@ -5,9 +5,9 @@ from uuid import uuid4
 
 import pytest
 
-from tests.core.grpc_client import GRPCClient
-from tests.core.osac_cli import OsacCLI
-from tests.core.runner import run_unchecked
+from tests.e2e.core.grpc_client import GRPCClient
+from tests.e2e.core.osac_cli import OsacCLI
+from tests.e2e.core.runner import run_unchecked
 
 CLIENT_LISTABLE_RESOURCES = [
     "clustertemplates",
@@ -94,9 +94,7 @@ def test_jwt_security_group_lifecycle(jwt_grpc_tenant1: GRPCClient) -> None:
         pytest.fail(f"VirtualNetwork {vn_id} did not reach READY state within 180s")
 
     subnet_name: str = f"jwt-sg-subnet-{uuid4().hex[:8]}"
-    subnet_id: str = jwt_grpc_tenant1.create_subnet(
-        name=subnet_name, virtual_network=vn_id, ipv4_cidr="10.202.1.0/24",
-    )
+    subnet_id: str = jwt_grpc_tenant1.create_subnet(name=subnet_name, virtual_network=vn_id, ipv4_cidr="10.202.1.0/24")
     for _ in range(90):
         sn = jwt_grpc_tenant1.get_subnet(subnet_id=subnet_id)
         if sn["object"].get("status", {}).get("state") == "SUBNET_STATE_READY":

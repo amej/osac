@@ -4,24 +4,18 @@ import time
 from datetime import UTC, datetime
 
 from tests.e2e.catalog.conftest import unique_name
-from tests.core.grpc_client import GRPCClient
-from tests.core.helpers import wait_for_cr, wait_for_deletion, wait_for_restart, wait_for_running
-from tests.core.k8s_client import K8sClient
-from tests.core.osac_cli import OsacCLI
+from tests.e2e.core.grpc_client import GRPCClient
+from tests.e2e.core.helpers import wait_for_cr, wait_for_deletion, wait_for_restart, wait_for_running
+from tests.e2e.core.k8s_client import K8sClient
+from tests.e2e.core.osac_cli import OsacCLI
 
 
 def test_compute_instance_restart_past_timestamp_ignored(
-    cli: OsacCLI,
-    grpc: GRPCClient,
-    k8s_hub_client: K8sClient,
-    vm_template: str,
-    default_subnet: str,
+    cli: OsacCLI, grpc: GRPCClient, k8s_hub_client: K8sClient, vm_template: str, default_subnet: str
 ) -> None:
     name = unique_name("e2e-ci")
     uuid: str = cli.create_compute_instance(
-        template=vm_template,
-        name=name,
-        network_attachments=[{"subnet": default_subnet}],
+        template=vm_template, name=name, network_attachments=[{"subnet": default_subnet}]
     )
     ci_name: str = wait_for_cr(k8s=k8s_hub_client, uuid=uuid)
     wait_for_running(k8s=k8s_hub_client, name=ci_name)

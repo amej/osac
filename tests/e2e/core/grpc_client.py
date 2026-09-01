@@ -7,7 +7,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from tests.core.runner import run, run_unchecked
+from tests.e2e.core.runner import run, run_unchecked
 
 PUBLIC_API: str = "osac.public.v1"
 PRIVATE_API: str = "osac.private.v1"
@@ -239,12 +239,7 @@ class GRPCClient:
     # ExternalIPPool operations (private API only)
 
     def create_external_ip_pool(
-        self,
-        *,
-        name: str,
-        cidrs: list[str],
-        ip_family: str = "IP_FAMILY_IPV4",
-        implementation_strategy: str = "",
+        self, *, name: str, cidrs: list[str], ip_family: str = "IP_FAMILY_IPV4", implementation_strategy: str = ""
     ) -> str:
         response: dict[str, Any] = self.call(
             service=f"{PRIVATE_API}.ExternalIPPools/Create",
@@ -349,7 +344,7 @@ class GRPCClient:
         response: dict[str, Any] = self.call(service=f"{PUBLIC_API}.ClusterCatalogItems/List")
         return [item["id"] for item in response.get("items", [])]
 
-    def update_cluster_catalog_item(self, *, catalog_item_id: str, **fields: Any) -> dict[str, Any]:
+    def update_cluster_catalog_item(self, *, catalog_item_id: str, **fields: Any) -> dict[str, Any]:  # noqa: ANN401
         if not fields:
             raise ValueError("update_cluster_catalog_item requires at least one field to update")
         obj: dict[str, Any] = {"id": catalog_item_id, **fields}
@@ -384,7 +379,7 @@ class GRPCClient:
         response: dict[str, Any] = self.call(service=f"{PUBLIC_API}.ComputeInstanceCatalogItems/List")
         return [item["id"] for item in response.get("items", [])]
 
-    def update_compute_instance_catalog_item(self, *, catalog_item_id: str, **fields: Any) -> dict[str, Any]:
+    def update_compute_instance_catalog_item(self, *, catalog_item_id: str, **fields: Any) -> dict[str, Any]:  # noqa: ANN401
         if not fields:
             raise ValueError("update_compute_instance_catalog_item requires at least one field to update")
         obj: dict[str, Any] = {"id": catalog_item_id, **fields}
@@ -458,7 +453,7 @@ class GRPCClient:
         response: dict[str, Any] = self.call(service=f"{PRIVATE_API}.ClusterVersions/List")
         return [item["id"] for item in response.get("items", [])]
 
-    def update_cluster_version(self, *, version_id: str, **fields: Any) -> dict[str, Any]:
+    def update_cluster_version(self, *, version_id: str, **fields: Any) -> dict[str, Any]:  # noqa: ANN401
         if not fields:
             raise ValueError("update_cluster_version requires at least one field to update")
         return self.call(
@@ -727,7 +722,7 @@ class GRPCClient:
         response: dict[str, Any] = self.call(service=f"{PRIVATE_API}.NetworkClasses/List")
         return response.get("items", [])
 
-    def update_network_class(self, *, network_class_id: str, **fields: Any) -> dict[str, Any]:
+    def update_network_class(self, *, network_class_id: str, **fields: Any) -> dict[str, Any]:  # noqa: ANN401
         if not fields:
             raise ValueError("update_network_class requires at least one field to update")
         obj: dict[str, Any] = {"id": network_class_id, **fields}

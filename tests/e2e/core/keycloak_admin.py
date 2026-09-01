@@ -5,7 +5,7 @@ import time
 from typing import Any
 from urllib.parse import urlencode
 
-from tests.core.runner import run
+from tests.e2e.core.runner import run
 
 
 def get_admin_token(*, keycloak_url: str, username: str, password: str) -> str:
@@ -36,7 +36,12 @@ def get_admin_token(*, keycloak_url: str, username: str, password: str) -> str:
 
 
 def keycloak_admin_request(
-    *, keycloak_url: str, admin_token: str, method: str, path: str, data: Any = None
+    *,
+    keycloak_url: str,
+    admin_token: str,
+    method: str,
+    path: str,
+    data: Any = None,  # noqa: ANN401
 ) -> tuple[int, bytes]:
     """
     Make an authenticated request to the Keycloak admin API for the 'osac' realm.
@@ -72,9 +77,7 @@ def keycloak_admin_request(
     return status_code, body
 
 
-def wait_for_organization(
-    *, keycloak_url: str, admin_token: str, org_name: str, timeout_seconds: int = 60
-) -> str:
+def wait_for_organization(*, keycloak_url: str, admin_token: str, org_name: str, timeout_seconds: int = 60) -> str:
     """
     Wait for an organization to be synced to Keycloak and return its ID.
     Polls with exponential backoff until the organization exists or timeout is reached.
@@ -86,10 +89,7 @@ def wait_for_organization(
     while time.time() - start_time < timeout_seconds:
         query = urlencode({"exact": "true", "search": org_name})
         status, body = keycloak_admin_request(
-            keycloak_url=keycloak_url,
-            admin_token=admin_token,
-            method="GET",
-            path=f"/organizations?{query}",
+            keycloak_url=keycloak_url, admin_token=admin_token, method="GET", path=f"/organizations?{query}"
         )
 
         if status != 200:
@@ -217,6 +217,7 @@ def add_user_to_organization_group(
             f"Failed to add user '{username}' to group in organization '{org_name}': "
             f"status={status} body={body.decode()}"
         )
+
 
 def wait_for_project_in_keycloak(
     *, keycloak_url: str, admin_token: str, org_id: str, project_name: str, timeout_seconds: int = 300

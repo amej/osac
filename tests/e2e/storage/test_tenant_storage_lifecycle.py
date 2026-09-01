@@ -12,14 +12,9 @@ from __future__ import annotations
 import textwrap
 from uuid import uuid4
 
-from tests.core.helpers import (
-    wait_for_tenant_condition,
-    wait_for_tenant_cr,
-    wait_for_tenant_deletion,
-)
-from tests.core.k8s_client import K8sClient
-from tests.core.runner import poll_until
-
+from tests.e2e.core.helpers import wait_for_tenant_condition, wait_for_tenant_cr, wait_for_tenant_deletion
+from tests.e2e.core.k8s_client import K8sClient
+from tests.e2e.core.runner import poll_until
 
 _NAMESPACE_MANIFEST = textwrap.dedent("""\
     apiVersion: v1
@@ -38,9 +33,7 @@ _TENANT_MANIFEST = textwrap.dedent("""\
 """)
 
 
-def test_tenant_storage_lifecycle(
-    k8s_hub_client: K8sClient, storage_config_namespace: str
-) -> None:
+def test_tenant_storage_lifecycle(k8s_hub_client: K8sClient, storage_config_namespace: str) -> None:
     tenant_name: str = f"test-storage-{uuid4().hex[:8]}"
     namespace: str = k8s_hub_client.namespace
 
