@@ -16,7 +16,7 @@ package it
 import (
 	"context"
 	"fmt"
-	"math/rand/v2"
+	"sync/atomic"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2/dsl/core"
@@ -30,8 +30,13 @@ import (
 	"github.com/osac-project/osac/fulfillment-service/internal/uuid"
 )
 
+// cidrCounter provides a process-wide monotonic sequence so uniqueCIDR never returns
+// the same CIDR twice within a test run, avoiding pool CIDR collisions between specs.
+var cidrCounter atomic.Int64
+
 func uniqueCIDR() string {
-	return fmt.Sprintf("10.%d.%d.0/28", rand.IntN(200)+20, rand.IntN(256))
+	n := cidrCounter.Add(1)
+	return fmt.Sprintf("10.%d.%d.0/28", 20+(n/256)%200, n%256)
 }
 
 var _ = Describe("Private ExternalIPPool CRUD", func() {

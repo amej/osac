@@ -75,8 +75,10 @@ var _ = Describe("BareMetalInstance IP Discovery", func() {
 				Namespace:    "default",
 			},
 			Spec: v1alpha1.BareMetalInstanceSpec{
-				HostType:           "test-host",
-				ExternalHostID:     "host-456",
+				ExternalHostID: "host-456",
+				Selector: v1alpha1.HostSelectorSpec{
+					HostSelector: map[string]string{"test": "value"},
+				},
 				HostClass:          "openstack",
 				TemplateID:         "noop",
 				NetworkAttachments: attachments,

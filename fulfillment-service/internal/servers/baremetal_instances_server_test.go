@@ -169,8 +169,9 @@ var _ = Describe("Bare metal instances server", func() {
 						Name: "test-baremetal-instance",
 					}.Build(),
 					Spec: publicv1.BareMetalInstanceSpec_builder{
-						CatalogItem: publicv1.BareMetalInstanceCatalogItemReference_builder{Id: catalogItemID}.Build(),
-						RunStrategy: new(publicv1.BareMetalInstanceRunStrategy_BARE_METAL_INSTANCE_RUN_STRATEGY_ALWAYS),
+						CatalogItem:  publicv1.BareMetalInstanceCatalogItemReference_builder{Id: catalogItemID}.Build(),
+						InstanceType: publicv1.BareMetalInstanceTypeLocalReference_builder{Id: "default-type"}.Build(),
+						RunStrategy:  new(publicv1.BareMetalInstanceRunStrategy_BARE_METAL_INSTANCE_RUN_STRATEGY_ALWAYS),
 					}.Build(),
 				}.Build(),
 			}.Build())

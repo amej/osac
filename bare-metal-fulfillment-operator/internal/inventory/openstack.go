@@ -164,6 +164,35 @@ func (c *OpenStackClient) FindFreeHost(ctx context.Context, matchExpressions map
 }
 
 func (c *OpenStackClient) findFreeHost(ctx context.Context, matchExpressions map[string]string) (*Host, error) {
+	if err := validateMatchExpressions(matchExpressions); err != nil {
+		return nil, err
+	}
+
+	log := ctrllog.FromContext(ctx)
+	log.Info("searching for free host", "selectorLabels", matchExpressions)
+
+	// managedBy is enforced client-side as a default-aware ownership guard
+	// (mirroring the Metal3 backend), and provisionState is enforced server-side
+	// via ListOpts below. Both are excluded from the generic osac_labels match so
+	// that they are not looked up as node labels (which would reject every node,
+	// since provisionState is a node field, not an osac_label).
+	matchManagedBy := matchExpressions[ManagedByLabel]
+	if matchManagedBy == "" {
+		matchManagedBy = shared.OsacDefaultManagedByValue
+	}
+	labelMatchExpressions := make(map[string]string, len(matchExpressions))
+	for key, value := range matchExpressions {
+		if key == ManagedByLabel || key == "provisionState" {
+			continue
+		}
+		labelMatchExpressions[key] = value
+	}
+
+	// Note: server-side ResourceClass filtering is intentionally not used.
+	// Label-based selection supports arbitrary keys (gpu=a100, datacenter=west)
+	// that cannot be mapped to a single resource_class value. All filtering
+	// is done client-side via osac_labels. Ironic nodes must have osac_labels
+	// populated for this to work correctly.
 	listOpts := nodes.ListOpts{
 		Fields: []string{
 			"uuid",
@@ -172,16 +201,8 @@ func (c *OpenStackClient) findFreeHost(ctx context.Context, matchExpressions map
 			"provision_state",
 			"extra",
 		},
+		ProvisionState: nodes.ProvisionState(shared.OsacDefaultProvisionStateValue),
 	}
-
-	if hostType, ok := matchExpressions["hostType"]; ok {
-		listOpts.ResourceClass = hostType
-	}
-	provisionState, ok := matchExpressions["provisionState"]
-	if !ok || provisionState == "" {
-		provisionState = shared.OsacDefaultProvisionStateValue
-	}
-	listOpts.ProvisionState = nodes.ProvisionState(provisionState)
 
 	var foundHost *Host
 	err := nodes.List(c.client, listOpts).EachPage(ctx, func(ctx context.Context, page pagination.Page) (bool, error) {
@@ -191,31 +212,31 @@ func (c *OpenStackClient) findFreeHost(ctx context.Context, matchExpressions map
 			return false, err
 		}
 
-		// shuffle to reduce chances of getting an unmarked but locked host
-		nodes := make([]*nodes.Node, len(nodeList))
+		nodeRefs := make([]*nodes.Node, len(nodeList))
 		for i := range nodeList {
-			nodes[i] = &nodeList[i]
+			nodeRefs[i] = &nodeList[i]
 		}
-		rand.Shuffle(len(nodes), func(i int, j int) {
-			nodes[i], nodes[j] = nodes[j], nodes[i]
+		rand.Shuffle(len(nodeRefs), func(i, j int) {
+			nodeRefs[i], nodeRefs[j] = nodeRefs[j], nodeRefs[i]
 		})
 
-		for _, node := range nodes {
-			// Check if host is already assigned by looking for bareMetalInstanceId labels
+		for _, node := range nodeRefs {
+			// Skip already assigned hosts
 			bareMetalInstanceID, _ := getNestedLabel(node, BareMetalInstanceIDLabel)
 			if bareMetalInstanceID != "" {
 				continue
 			}
-			bareMetalPoolID, _ := getNestedLabel(node, shared.OsacBareMetalPoolIDLabel)
 
-			// Get managedBy label, defaulting to standard value if not set
+			// Apply host selector label filtering against the node's osac_labels.
+			if !nodeMatchesLabels(node, labelMatchExpressions) {
+				continue
+			}
+
+			// Ownership guard: skip hosts managed by another system. A missing or
+			// empty managedBy label is treated as the default owner.
 			managedBy, ok := getNestedLabel(node, ManagedByLabel)
 			if !ok || managedBy == "" {
 				managedBy = shared.OsacDefaultManagedByValue
-			}
-			matchManagedBy, ok := matchExpressions["managedBy"]
-			if !ok || matchManagedBy == "" {
-				matchManagedBy = shared.OsacDefaultManagedByValue
 			}
 			if managedBy != matchManagedBy {
 				continue
@@ -235,6 +256,7 @@ func (c *OpenStackClient) findFreeHost(ctx context.Context, matchExpressions map
 				continue
 			}
 
+			bareMetalPoolID, _ := getNestedLabel(node, shared.OsacBareMetalPoolIDLabel)
 			foundHost = &Host{
 				BareMetalPoolID:     bareMetalPoolID,
 				BareMetalInstanceID: bareMetalInstanceID,
@@ -473,4 +495,54 @@ func (c *OpenStackClient) getHostNICs(ctx context.Context, inventoryHostID strin
 		nics = append(nics, HostNIC{MAC: strings.ToLower(p.Address)})
 	}
 	return nics, nil
+}
+
+// validateMatchExpressions validates matchExpressions keys and values for the OpenStack backend.
+// Rejects empty keys, keys containing spaces, and empty values. All other keys are valid and will be
+// used as host selector labels for filtering nodes.
+func validateMatchExpressions(matchExpressions map[string]string) error {
+	if len(matchExpressions) == 0 {
+		return fmt.Errorf("invalid matchExpressions: empty map")
+	}
+
+	for key, value := range matchExpressions {
+		if key == "" {
+			return fmt.Errorf("invalid matchExpression: empty key not allowed")
+		}
+
+		if strings.Contains(key, " ") {
+			return fmt.Errorf("invalid matchExpression: key %q contains spaces", key)
+		}
+
+		if value == "" {
+			return fmt.Errorf("invalid matchExpression: empty value not allowed for key %q", key)
+		}
+	}
+	return nil
+}
+
+func nodeMatchesLabels(node *nodes.Node, matchExpressions map[string]string) bool {
+	if len(matchExpressions) == 0 {
+		return true
+	}
+
+	labelsMap, ok := node.Extra["osac_labels"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+
+	for key, expectedValue := range matchExpressions {
+		nodeValue, exists := labelsMap[key]
+		if !exists {
+			return false
+		}
+		nodeValueStr, ok := nodeValue.(string)
+		if !ok {
+			return false
+		}
+		if nodeValueStr != expectedValue {
+			return false
+		}
+	}
+	return true
 }

@@ -45,8 +45,10 @@ var _ = Describe("BareMetalInstance Networking", func() {
 				Namespace:    "default",
 			},
 			Spec: v1alpha1.BareMetalInstanceSpec{
-				HostType:           "test-host",
-				ExternalHostID:     "host-123",
+				ExternalHostID: "host-123",
+				Selector: v1alpha1.HostSelectorSpec{
+					HostSelector: map[string]string{"test": "value"},
+				},
 				HostClass:          "openstack",
 				TemplateID:         "noop",
 				NetworkAttachments: attachments,
@@ -391,9 +393,11 @@ var _ = Describe("BareMetalInstance network/provision ordering", func() {
 				Namespace:    "default",
 			},
 			Spec: v1alpha1.BareMetalInstanceSpec{
-				HostType:       "test-host",
 				ExternalHostID: "host-order-1",
-				HostClass:      "openstack",
+				Selector: v1alpha1.HostSelectorSpec{
+					HostSelector: map[string]string{"test": "value"},
+				},
+				HostClass: "openstack",
 				// Non-noop template so the provisioning branch is active.
 				TemplateID: "bm_provision",
 				NetworkAttachments: []v1alpha1.BareMetalNetworkAttachment{

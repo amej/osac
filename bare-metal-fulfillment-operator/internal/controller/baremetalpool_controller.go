@@ -344,7 +344,16 @@ func (r *BareMetalPoolReconciler) listAndGroupBareMetalInstances(ctx context.Con
 		if !bareMetalInstanceList.Items[i].DeletionTimestamp.IsZero() {
 			continue
 		}
-		hostType := bareMetalInstanceList.Items[i].Spec.HostType
+		// Read hostType from annotation (pool-created instances), fall back to label
+		// (hand-created instances or pre-migration instances)
+		hostType := bareMetalInstanceList.Items[i].Annotations[HostTypeAnnotationKey]
+		if hostType == "" {
+			hostType = bareMetalInstanceList.Items[i].Labels[HostTypeLabelKey]
+		}
+		if hostType == "" {
+			log.Error(nil, "BareMetalInstance missing host-type in both annotation and label", "name", bareMetalInstanceList.Items[i].Name)
+			continue
+		}
 		currentBareMetalInstances[hostType] = append(currentBareMetalInstances[hostType], &bareMetalInstanceList.Items[i])
 	}
 
@@ -601,8 +610,7 @@ func (r *BareMetalPoolReconciler) createBareMetalInstanceCR(
 	templateParameters := ""
 	selector := v1alpha1.HostSelectorSpec{
 		HostSelector: map[string]string{
-			"managedBy":      shared.OsacDefaultManagedByValue,
-			"provisionState": shared.OsacDefaultProvisionStateValue,
+			"managedBy": shared.OsacDefaultManagedByValue,
 		},
 	}
 	if currentProfile != nil {
@@ -610,7 +618,9 @@ func (r *BareMetalPoolReconciler) createBareMetalInstanceCR(
 			templateID = currentProfile.HostTemplate
 		}
 		templateParameters = bareMetalPool.Spec.Profile.TemplateParameters
-		selector.HostSelector = currentProfile.HostSelector
+		if len(currentProfile.HostSelector) > 0 {
+			selector.HostSelector = currentProfile.HostSelector
+		}
 	}
 
 	// Prepare inventory labels from profile
@@ -631,9 +641,11 @@ func (r *BareMetalPoolReconciler) createBareMetalInstanceCR(
 			Name:      bareMetalInstanceName,
 			Namespace: namespace,
 			Labels:    labels,
+			Annotations: map[string]string{
+				HostTypeAnnotationKey: hostType,
+			},
 		},
 		Spec: v1alpha1.BareMetalInstanceSpec{
-			HostType:                  hostType,
 			ExternalHostID:            "",
 			ExternalHostName:          "",
 			Selector:                  selector,

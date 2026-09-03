@@ -40,8 +40,10 @@ var _ = Describe("BareMetalInstance lifecycle", func() {
 		privateBareMetalInstancesClient     privatev1.BareMetalInstancesClient
 		bareMetalInstanceTemplatesClient    privatev1.BareMetalInstanceTemplatesClient
 		bareMetalInstanceCatalogItemsClient privatev1.BareMetalInstanceCatalogItemsClient
+		bareMetalInstanceTypesClient        privatev1.BareMetalInstanceTypesClient
 		templateId                          string
 		catalogItemId                       string
+		instanceTypeId                      string
 	)
 
 	BeforeEach(func(ctx context.Context) {
@@ -50,6 +52,7 @@ var _ = Describe("BareMetalInstance lifecycle", func() {
 		privateBareMetalInstancesClient = privatev1.NewBareMetalInstancesClient(tool.InternalView().AdminConn())
 		bareMetalInstanceTemplatesClient = privatev1.NewBareMetalInstanceTemplatesClient(tool.InternalView().AdminConn())
 		bareMetalInstanceCatalogItemsClient = privatev1.NewBareMetalInstanceCatalogItemsClient(tool.InternalView().AdminConn())
+		bareMetalInstanceTypesClient = privatev1.NewBareMetalInstanceTypesClient(tool.InternalView().AdminConn())
 
 		// Create BareMetalInstanceTemplate with an explicit ID that matches the BMFO CRD
 		// validation pattern (^[a-zA-Z_][a-zA-Z0-9._]*$). Auto-generated UUIDs start with
@@ -92,6 +95,41 @@ var _ = Describe("BareMetalInstance lifecycle", func() {
 			}.Build())
 			Expect(err).ToNot(HaveOccurred())
 		})
+
+		// Create BareMetalInstanceType for the tests
+		instanceTypeResp, err := bareMetalInstanceTypesClient.Create(ctx, privatev1.BareMetalInstanceTypesCreateRequest_builder{
+			Object: privatev1.BareMetalInstanceType_builder{
+				Metadata: privatev1.Metadata_builder{
+					Name: fmt.Sprintf("test-instance-type-%s", uuid.New()[24:32]),
+				}.Build(),
+				Spec: privatev1.BareMetalInstanceTypeSpec_builder{
+					Hardware: privatev1.BareMetalHardwareSpec_builder{
+						Cpu: privatev1.BareMetalCPUSpec_builder{
+							Cores:          4,
+							Architecture:   "x86_64",
+							ThreadsPerCore: 2,
+						}.Build(),
+						Memory: privatev1.BareMetalMemorySpec_builder{
+							TotalGb: 16,
+						}.Build(),
+					}.Build(),
+					HostLabelSelector: privatev1.BareMetalLabelSelector_builder{
+						MatchLabels: map[string]string{
+							"osac.openshift.io/host-type": "compute",
+						},
+					}.Build(),
+					Description: "Test bare metal instance type for integration tests.",
+				}.Build(),
+			}.Build(),
+		}.Build())
+		Expect(err).ToNot(HaveOccurred())
+		instanceTypeId = instanceTypeResp.GetObject().GetId()
+		DeferCleanup(func(ctx context.Context) {
+			_, err := bareMetalInstanceTypesClient.Delete(ctx, privatev1.BareMetalInstanceTypesDeleteRequest_builder{
+				Id: instanceTypeId,
+			}.Build())
+			Expect(err).ToNot(HaveOccurred())
+		})
 	})
 
 	It("Creates a BareMetalInstance and verifies fields", func(ctx context.Context) {
@@ -102,7 +140,8 @@ var _ = Describe("BareMetalInstance lifecycle", func() {
 					Name: fmt.Sprintf("test-bmi-%s", uuid.New()[24:32]),
 				}.Build(),
 				Spec: publicv1.BareMetalInstanceSpec_builder{
-					CatalogItem: publicv1.BareMetalInstanceCatalogItemReference_builder{Id: catalogItemId}.Build(),
+					CatalogItem:  publicv1.BareMetalInstanceCatalogItemReference_builder{Id: catalogItemId}.Build(),
+					InstanceType: publicv1.BareMetalInstanceTypeLocalReference_builder{Id: instanceTypeId}.Build(),
 				}.Build(),
 			}.Build(),
 		}.Build())
@@ -169,7 +208,8 @@ var _ = Describe("BareMetalInstance lifecycle", func() {
 					Name: fmt.Sprintf("test-bmi-%s", uuid.New()[24:32]),
 				}.Build(),
 				Spec: publicv1.BareMetalInstanceSpec_builder{
-					CatalogItem: publicv1.BareMetalInstanceCatalogItemReference_builder{Id: "non-existent-catalog-item"}.Build(),
+					CatalogItem:  publicv1.BareMetalInstanceCatalogItemReference_builder{Id: "non-existent-catalog-item"}.Build(),
+					InstanceType: publicv1.BareMetalInstanceTypeLocalReference_builder{Id: instanceTypeId}.Build(),
 				}.Build(),
 			}.Build(),
 		}.Build())
@@ -274,7 +314,8 @@ var _ = Describe("BareMetalInstance lifecycle", func() {
 		_, err = bareMetalInstancesClient.Create(ctx, publicv1.BareMetalInstancesCreateRequest_builder{
 			Object: publicv1.BareMetalInstance_builder{
 				Spec: publicv1.BareMetalInstanceSpec_builder{
-					CatalogItem: publicv1.BareMetalInstanceCatalogItemReference_builder{Id: catalogItemId}.Build(),
+					CatalogItem:  publicv1.BareMetalInstanceCatalogItemReference_builder{Id: catalogItemId}.Build(),
+					InstanceType: publicv1.BareMetalInstanceTypeLocalReference_builder{Id: instanceTypeId}.Build(),
 					NetworkAttachments: []*publicv1.BareMetalNetworkAttachment{
 						publicv1.BareMetalNetworkAttachment_builder{
 							Subnet: publicv1.SubnetLocalReference_builder{Id: subnetId}.Build(),
@@ -294,7 +335,8 @@ var _ = Describe("BareMetalInstance lifecycle", func() {
 					Name: fmt.Sprintf("test-bmi-%s", uuid.New()[24:32]),
 				}.Build(),
 				Spec: publicv1.BareMetalInstanceSpec_builder{
-					CatalogItem: publicv1.BareMetalInstanceCatalogItemReference_builder{Id: catalogItemId}.Build(),
+					CatalogItem:  publicv1.BareMetalInstanceCatalogItemReference_builder{Id: catalogItemId}.Build(),
+					InstanceType: publicv1.BareMetalInstanceTypeLocalReference_builder{Id: instanceTypeId}.Build(),
 					Image: publicv1.BareMetalInstanceImage_builder{
 						SourceType: "registry",
 						SourceRef:  "quay.io/test/rhel9:latest",
@@ -382,7 +424,8 @@ var _ = Describe("BareMetalInstance lifecycle", func() {
 					Name: fmt.Sprintf("test-bmi-%s", uuid.New()[24:32]),
 				}.Build(),
 				Spec: publicv1.BareMetalInstanceSpec_builder{
-					CatalogItem: publicv1.BareMetalInstanceCatalogItemReference_builder{Id: catalogItemId}.Build(),
+					CatalogItem:  publicv1.BareMetalInstanceCatalogItemReference_builder{Id: catalogItemId}.Build(),
+					InstanceType: publicv1.BareMetalInstanceTypeLocalReference_builder{Id: instanceTypeId}.Build(),
 				}.Build(),
 			}.Build(),
 		}.Build())
@@ -466,7 +509,8 @@ var _ = Describe("BareMetalInstance lifecycle", func() {
 					Name: fmt.Sprintf("test-bmi-%s", uuid.New()[24:32]),
 				}.Build(),
 				Spec: publicv1.BareMetalInstanceSpec_builder{
-					CatalogItem: publicv1.BareMetalInstanceCatalogItemReference_builder{Id: imageCatalogItemId}.Build(),
+					CatalogItem:  publicv1.BareMetalInstanceCatalogItemReference_builder{Id: imageCatalogItemId}.Build(),
+					InstanceType: publicv1.BareMetalInstanceTypeLocalReference_builder{Id: instanceTypeId}.Build(),
 				}.Build(),
 			}.Build(),
 		}.Build())
@@ -554,7 +598,8 @@ var _ = Describe("BareMetalInstance lifecycle", func() {
 					Name: fmt.Sprintf("test-bmi-%s", uuid.New()[24:32]),
 				}.Build(),
 				Spec: publicv1.BareMetalInstanceSpec_builder{
-					CatalogItem: publicv1.BareMetalInstanceCatalogItemReference_builder{Id: imageCatalogItemId}.Build(),
+					CatalogItem:  publicv1.BareMetalInstanceCatalogItemReference_builder{Id: imageCatalogItemId}.Build(),
+					InstanceType: publicv1.BareMetalInstanceTypeLocalReference_builder{Id: instanceTypeId}.Build(),
 					Image: publicv1.BareMetalInstanceImage_builder{
 						SourceType: "registry",
 						SourceRef:  "quay.io/user/custom:v2",
@@ -598,7 +643,8 @@ var _ = Describe("BareMetalInstance lifecycle", func() {
 					Name: fmt.Sprintf("test-bmi-%s", uuid.New()[24:32]),
 				}.Build(),
 				Spec: publicv1.BareMetalInstanceSpec_builder{
-					CatalogItem: publicv1.BareMetalInstanceCatalogItemReference_builder{Id: catalogItemId}.Build(),
+					CatalogItem:  publicv1.BareMetalInstanceCatalogItemReference_builder{Id: catalogItemId}.Build(),
+					InstanceType: publicv1.BareMetalInstanceTypeLocalReference_builder{Id: instanceTypeId}.Build(),
 					Image: publicv1.BareMetalInstanceImage_builder{
 						SourceRef: "quay.io/test:latest",
 					}.Build(),
@@ -619,7 +665,8 @@ var _ = Describe("BareMetalInstance lifecycle", func() {
 					Name: fmt.Sprintf("test-bmi-%s", uuid.New()[24:32]),
 				}.Build(),
 				Spec: publicv1.BareMetalInstanceSpec_builder{
-					CatalogItem: publicv1.BareMetalInstanceCatalogItemReference_builder{Id: catalogItemId}.Build(),
+					CatalogItem:  publicv1.BareMetalInstanceCatalogItemReference_builder{Id: catalogItemId}.Build(),
+					InstanceType: publicv1.BareMetalInstanceTypeLocalReference_builder{Id: instanceTypeId}.Build(),
 					Image: publicv1.BareMetalInstanceImage_builder{
 						SourceType: "registry",
 					}.Build(),
@@ -640,7 +687,8 @@ var _ = Describe("BareMetalInstance lifecycle", func() {
 					Name: fmt.Sprintf("test-bmi-%s", uuid.New()[24:32]),
 				}.Build(),
 				Spec: publicv1.BareMetalInstanceSpec_builder{
-					CatalogItem: publicv1.BareMetalInstanceCatalogItemReference_builder{Id: catalogItemId}.Build(),
+					CatalogItem:  publicv1.BareMetalInstanceCatalogItemReference_builder{Id: catalogItemId}.Build(),
+					InstanceType: publicv1.BareMetalInstanceTypeLocalReference_builder{Id: instanceTypeId}.Build(),
 					Image: publicv1.BareMetalInstanceImage_builder{
 						SourceType: "registry",
 						SourceRef:  "quay.io/test:latest",
@@ -674,7 +722,8 @@ var _ = Describe("BareMetalInstance lifecycle", func() {
 					Name: name,
 				}.Build(),
 				Spec: privatev1.BareMetalInstanceSpec_builder{
-					CatalogItem: privatev1.BareMetalInstanceCatalogItemReference_builder{Id: catalogItemId}.Build(),
+					CatalogItem:  privatev1.BareMetalInstanceCatalogItemReference_builder{Id: catalogItemId}.Build(),
+					InstanceType: privatev1.BareMetalInstanceTypeLocalReference_builder{Id: instanceTypeId}.Build(),
 					Image: privatev1.BareMetalInstanceImage_builder{
 						SourceType: "registry",
 						SourceRef:  "quay.io/other:latest",
@@ -699,7 +748,8 @@ var _ = Describe("BareMetalInstance lifecycle", func() {
 					Name: fmt.Sprintf("test-bmi-%s", uuid.New()[24:32]),
 				}.Build(),
 				Spec: publicv1.BareMetalInstanceSpec_builder{
-					CatalogItem: publicv1.BareMetalInstanceCatalogItemReference_builder{Id: catalogItemId}.Build(),
+					CatalogItem:  publicv1.BareMetalInstanceCatalogItemReference_builder{Id: catalogItemId}.Build(),
+					InstanceType: publicv1.BareMetalInstanceTypeLocalReference_builder{Id: instanceTypeId}.Build(),
 				}.Build(),
 			}.Build(),
 		}.Build())
@@ -760,6 +810,8 @@ var _ = Describe("BareMetalInstance lifecycle", func() {
 					Name: name,
 				}.Build(),
 				Spec: publicv1.BareMetalInstanceSpec_builder{
+					CatalogItem:    publicv1.BareMetalInstanceCatalogItemReference_builder{Id: catalogItemId}.Build(),
+					InstanceType:   publicv1.BareMetalInstanceTypeLocalReference_builder{Id: instanceTypeId}.Build(),
 					RestartTrigger: 1,
 				}.Build(),
 			}.Build(),
@@ -986,7 +1038,8 @@ var _ = Describe("BareMetalInstance lifecycle", func() {
 						Name: fmt.Sprintf("test-bmi-%s", uuid.New()[24:32]),
 					}.Build(),
 					Spec: publicv1.BareMetalInstanceSpec_builder{
-						Template: publicv1.BareMetalInstanceTemplateReference_builder{Id: directTemplateId}.Build(),
+						Template:     publicv1.BareMetalInstanceTemplateReference_builder{Id: directTemplateId}.Build(),
+						InstanceType: publicv1.BareMetalInstanceTypeLocalReference_builder{Id: instanceTypeId}.Build(),
 						Image: publicv1.BareMetalInstanceImage_builder{
 							SourceType: "registry",
 							SourceRef:  "quay.io/test/rhel9:latest",

@@ -61,11 +61,14 @@ type FunctionBuilder struct {
 }
 
 type function struct {
-	logger                   *slog.Logger
-	hubCache                 controllers.HubCache
-	bareMetalInstancesClient privatev1.BareMetalInstancesClient
-	hubsClient               privatev1.HubsClient
-	maskCalculator           *masks.Calculator
+	logger                              *slog.Logger
+	hubCache                            controllers.HubCache
+	bareMetalInstancesClient            privatev1.BareMetalInstancesClient
+	bareMetalInstanceCatalogItemsClient privatev1.BareMetalInstanceCatalogItemsClient
+	bareMetalInstanceTypesClient        privatev1.BareMetalInstanceTypesClient
+	bareMetalInstanceTemplatesClient    privatev1.BareMetalInstanceTemplatesClient
+	hubsClient                          privatev1.HubsClient
+	maskCalculator                      *masks.Calculator
 }
 
 type task struct {
@@ -116,11 +119,14 @@ func (b *FunctionBuilder) Build() (result controllers.ReconcilerFunction[*privat
 	}
 
 	object := &function{
-		logger:                   b.logger,
-		bareMetalInstancesClient: privatev1.NewBareMetalInstancesClient(b.connection),
-		hubsClient:               privatev1.NewHubsClient(b.connection),
-		hubCache:                 b.hubCache,
-		maskCalculator:           masks.NewCalculator().Build(),
+		logger:                              b.logger,
+		bareMetalInstancesClient:            privatev1.NewBareMetalInstancesClient(b.connection),
+		bareMetalInstanceCatalogItemsClient: privatev1.NewBareMetalInstanceCatalogItemsClient(b.connection),
+		bareMetalInstanceTypesClient:        privatev1.NewBareMetalInstanceTypesClient(b.connection),
+		bareMetalInstanceTemplatesClient:    privatev1.NewBareMetalInstanceTemplatesClient(b.connection),
+		hubsClient:                          privatev1.NewHubsClient(b.connection),
+		hubCache:                            b.hubCache,
+		maskCalculator:                      masks.NewCalculator().Build(),
 	}
 	result = object.run
 	return
@@ -608,8 +614,72 @@ func (t *task) mutateBMI(ctx context.Context, object *bmfov1alpha1.BareMetalInst
 	}
 	object.Annotations[annotations.Tenant] = t.bareMetalInstance.GetMetadata().GetTenant()
 
-	object.Spec.HostType = defaultHostType
-	object.Spec.TemplateID = controllers.RefKeyStr(t.bareMetalInstance.GetSpec().GetTemplate())
+	// Determine template ID: use direct template if present, otherwise resolve from catalog item.
+	var templateID string
+	if t.bareMetalInstance.GetSpec().HasTemplate() {
+		templateID = t.bareMetalInstance.GetSpec().GetTemplate().GetId()
+	} else if t.bareMetalInstance.GetSpec().HasCatalogItem() {
+		catalogItemResp, err := t.r.bareMetalInstanceCatalogItemsClient.Get(ctx, privatev1.BareMetalInstanceCatalogItemsGetRequest_builder{
+			Id: t.bareMetalInstance.GetSpec().GetCatalogItem().GetId(),
+		}.Build())
+		if err != nil {
+			return fmt.Errorf("failed to get catalog item '%s': %w", t.bareMetalInstance.GetSpec().GetCatalogItem().GetId(), err)
+		}
+		templateID = catalogItemResp.GetObject().GetTemplate().GetId()
+	} else {
+		return fmt.Errorf("BareMetalInstance must have either template or catalog_item")
+	}
+
+	// Resolve host selection labels for the CRD's Selector.HostSelector. When an instance type is
+	// specified, map its host_label_selector. Otherwise fall back to the template's host_type
+	// (legacy path), which the backends map to the osac.openshift.io/host-type label.
+	if object.Spec.Selector.HostSelector == nil {
+		object.Spec.Selector.HostSelector = make(map[string]string)
+	}
+	if t.bareMetalInstance.GetSpec().HasInstanceType() {
+		instanceTypeRef := t.bareMetalInstance.GetSpec().GetInstanceType()
+		instanceTypeResp, err := t.r.bareMetalInstanceTypesClient.Get(ctx, privatev1.BareMetalInstanceTypesGetRequest_builder{
+			Id: instanceTypeRef.GetId(),
+		}.Build())
+		if err != nil {
+			return fmt.Errorf("failed to get instance type '%s': %w", instanceTypeRef.GetId(), err)
+		}
+
+		instanceType := instanceTypeResp.GetObject()
+		if instanceType.GetSpec().HasHostLabelSelector() {
+			for key, value := range instanceType.GetSpec().GetHostLabelSelector().GetMatchLabels() {
+				object.Spec.Selector.HostSelector[key] = value
+			}
+		}
+	} else {
+		// Fall back to template host_type when no instance type is specified.
+		templateResp, err := t.r.bareMetalInstanceTemplatesClient.Get(ctx, privatev1.BareMetalInstanceTemplatesGetRequest_builder{
+			Id: templateID,
+		}.Build())
+		if err != nil {
+			return fmt.Errorf("failed to get instance template '%s': %w", templateID, err)
+		}
+		hostType := templateResp.GetObject().GetHostType()
+		if hostType == "" {
+			hostType = defaultHostType
+		}
+		object.Spec.Selector.HostSelector["hostType"] = hostType
+	}
+
+	// Validate that HostSelector is non-empty after resolving from instance type or template.
+	// The CRD requires MinProperties=1, so an empty selector would fail K8s admission.
+	// Return an explicit error here rather than letting K8s reject with a generic validation error.
+	if len(object.Spec.Selector.HostSelector) == 0 {
+		if t.bareMetalInstance.GetSpec().HasInstanceType() {
+			return fmt.Errorf(
+				"instance type '%s' has no host_label_selector - cannot determine host selection",
+				t.bareMetalInstance.GetSpec().GetInstanceType().GetId(),
+			)
+		}
+		return fmt.Errorf("cannot determine host selection: no instance_type and no template host_type")
+	}
+
+	object.Spec.TemplateID = templateID
 	object.Spec.TemplateParameters = ""
 	object.Spec.RunStrategy = bmfov1alpha1.RunStrategyUnspecified
 	object.Spec.RestartTrigger = t.bareMetalInstance.GetSpec().GetRestartTrigger()

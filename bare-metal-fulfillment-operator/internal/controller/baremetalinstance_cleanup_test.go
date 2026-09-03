@@ -52,9 +52,11 @@ var _ = Describe("BareMetalInstance Auto-Cleanup", func() {
 						Namespace:    "default",
 					},
 					Spec: v1alpha1.BareMetalInstanceSpec{
-						HostType:       "test-host",
 						ExternalHostID: "host-789",
-						TemplateID:     "noop",
+						Selector: v1alpha1.HostSelectorSpec{
+							HostSelector: map[string]string{"test": "value"},
+						},
+						TemplateID: "noop",
 					},
 				}
 				Expect(k8sClient.Create(ctx, bmi)).To(Succeed())
@@ -79,9 +81,11 @@ var _ = Describe("BareMetalInstance Auto-Cleanup", func() {
 						Namespace:    "default",
 					},
 					Spec: v1alpha1.BareMetalInstanceSpec{
-						HostType:       "test-host",
 						ExternalHostID: "host-789",
-						TemplateID:     "noop",
+						Selector: v1alpha1.HostSelectorSpec{
+							HostSelector: map[string]string{"test": "value"},
+						},
+						TemplateID: "noop",
 					},
 				}
 				controllerutil.AddFinalizer(bmi, BareMetalInstanceCleanupFinalizer)

@@ -468,7 +468,10 @@ var _ = Describe("SubnetReconciler", func() {
 					Namespace: "default",
 				},
 				Spec: bmfov1alpha1.BareMetalInstanceSpec{
-					HostType:   "test-host",
+					ExternalHostID: "test-host-id",
+					Selector: bmfov1alpha1.HostSelectorSpec{
+						HostSelector: map[string]string{"test": "value"},
+					},
 					TemplateID: "noop",
 					NetworkAttachments: []bmfov1alpha1.BareMetalNetworkAttachment{
 						{SubnetRef: testSubnet.Name, Primary: true},

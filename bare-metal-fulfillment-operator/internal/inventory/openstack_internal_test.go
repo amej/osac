@@ -26,6 +26,8 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/baremetal/v1/ports"
 	th "github.com/gophercloud/gophercloud/v2/testhelper"
 	fakeclient "github.com/gophercloud/gophercloud/v2/testhelper/client"
+
+	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/shared"
 )
 
 func TestIsAuthError(t *testing.T) {
@@ -244,7 +246,9 @@ func TestGetHostNICs_OpenStack(t *testing.T) {
 }
 
 func TestFindFreeHost_PortFilter(t *testing.T) {
-	const nodeListResponse = `{"nodes": [{"uuid": "node-1", "name": "host-1", "resource_class": "gpu-node", "provision_state": "available", "extra": {}}]}`
+	// osac_labels carries the host selector labels; matchExpressions are now matched
+	// against these rather than resource_class (see OSAC-3578 label filtering).
+	const nodeListResponse = `{"nodes": [{"uuid": "node-1", "name": "host-1", "resource_class": "gpu-node", "provision_state": "available", "extra": {"osac_labels": {"hostType": "gpu-node"}}}]}`
 
 	t.Run("selects node with ports", func(t *testing.T) {
 		fakeServer := th.SetupHTTP()
@@ -337,6 +341,115 @@ func TestFindFreeHost_PortFilter(t *testing.T) {
 		}
 		if host != nil {
 			t.Errorf("expected nil (port API error → skip), got %+v", host)
+		}
+	})
+}
+
+func TestFindFreeHost_ManagedByGuard(t *testing.T) {
+	// Ownership guard mirrors the Metal3 backend: a node whose managedBy osac_label
+	// belongs to another system is skipped; a missing/empty managedBy defaults to the
+	// osac-owned value and is selectable. managedBy is never matched as a host label.
+	portsResponse := `{"ports": [{"address": "aa:bb:cc:dd:ee:01"}]}`
+
+	t.Run("skips node owned by another system", func(t *testing.T) {
+		fakeServer := th.SetupHTTP()
+		defer fakeServer.Teardown()
+
+		fakeServer.Mux.HandleFunc("/nodes", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprint(w, `{"nodes": [{"uuid": "node-1", "name": "host-1", "provision_state": "available", "extra": {"osac_labels": {"hostType": "gpu-node", "managedBy": "someone-else"}}}]}`)
+		})
+		fakeServer.Mux.HandleFunc("/ports/detail", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprint(w, portsResponse)
+		})
+
+		sc := fakeclient.ServiceClient(fakeServer)
+		c := &OpenStackClient{
+			client:           sc,
+			newServiceClient: func(context.Context) (*gophercloud.ServiceClient, error) { return sc, nil },
+			HostClass:        "openstack",
+		}
+
+		host, err := c.FindFreeHost(context.Background(), map[string]string{"hostType": "gpu-node"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if host != nil {
+			t.Errorf("expected nil (foreign managedBy skipped), got %+v", host)
+		}
+	})
+
+	t.Run("selects node with no managedBy label (defaults to owned)", func(t *testing.T) {
+		fakeServer := th.SetupHTTP()
+		defer fakeServer.Teardown()
+
+		fakeServer.Mux.HandleFunc("/nodes", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprint(w, `{"nodes": [{"uuid": "node-1", "name": "host-1", "provision_state": "available", "extra": {"osac_labels": {"hostType": "gpu-node"}}}]}`)
+		})
+		fakeServer.Mux.HandleFunc("/ports/detail", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprint(w, portsResponse)
+		})
+
+		sc := fakeclient.ServiceClient(fakeServer)
+		c := &OpenStackClient{
+			client:           sc,
+			newServiceClient: func(context.Context) (*gophercloud.ServiceClient, error) { return sc, nil },
+			HostClass:        "openstack",
+		}
+
+		host, err := c.FindFreeHost(context.Background(), map[string]string{"hostType": "gpu-node"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if host == nil {
+			t.Fatal("expected a host, got nil")
+		}
+		if host.InventoryHostID != "node-1" {
+			t.Errorf("expected node-1, got %q", host.InventoryHostID)
+		}
+		if host.ManagedBy != shared.OsacDefaultManagedByValue {
+			t.Errorf("expected managedBy %q, got %q", shared.OsacDefaultManagedByValue, host.ManagedBy)
+		}
+	})
+
+	t.Run("selects node explicitly owned by osac default", func(t *testing.T) {
+		fakeServer := th.SetupHTTP()
+		defer fakeServer.Teardown()
+
+		fakeServer.Mux.HandleFunc("/nodes", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprintf(w, `{"nodes": [{"uuid": "node-1", "name": "host-1", "provision_state": "available", "extra": {"osac_labels": {"hostType": "gpu-node", "managedBy": %q}}}]}`, shared.OsacDefaultManagedByValue)
+		})
+		fakeServer.Mux.HandleFunc("/ports/detail", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprint(w, portsResponse)
+		})
+
+		sc := fakeclient.ServiceClient(fakeServer)
+		c := &OpenStackClient{
+			client:           sc,
+			newServiceClient: func(context.Context) (*gophercloud.ServiceClient, error) { return sc, nil },
+			HostClass:        "openstack",
+		}
+
+		host, err := c.FindFreeHost(context.Background(), map[string]string{"hostType": "gpu-node"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if host == nil {
+			t.Fatal("expected a host, got nil")
+		}
+		if host.InventoryHostID != "node-1" {
+			t.Errorf("expected node-1, got %q", host.InventoryHostID)
 		}
 	})
 }

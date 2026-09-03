@@ -253,7 +253,11 @@ func createBCMBMI(name, hostType string) {
 	bmi := &v1alpha1.BareMetalInstance{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: bcmTestNS},
 		Spec: v1alpha1.BareMetalInstanceSpec{
-			HostType:   hostType,
+			Selector: v1alpha1.HostSelectorSpec{
+				HostSelector: map[string]string{
+					"hostType": hostType,
+				},
+			},
 			TemplateID: shared.OsacNoopTemplate,
 		},
 	}

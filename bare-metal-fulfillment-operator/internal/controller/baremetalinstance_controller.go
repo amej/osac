@@ -254,17 +254,26 @@ func (r *BareMetalInstanceReconciler) reconcileInventory(ctx context.Context, ba
 	}
 
 	if bareMetalInstance.Spec.ExternalHostID == "" {
+		// Validate that Selector.HostSelector is non-empty. This is a defensive
+		// check — the fulfillment-service API requires a non-empty host label
+		// selector and the CRD enforces MinProperties=1 — so an empty selector is
+		// an unrecoverable spec error. Treat it as terminal (Phase=Failed, nil
+		// error) rather than returning an error that would only back off
+		// exponentially without ever self-resolving.
+		if len(bareMetalInstance.Spec.Selector.HostSelector) == 0 {
+			log.Error(nil, "HostSelector is required for label-based host selection")
+			bareMetalInstance.Status.Phase = v1alpha1.BareMetalInstancePhaseFailed
+			bareMetalInstance.SetStatusCondition(
+				v1alpha1.HostConditionAllocated,
+				metav1.ConditionFalse,
+				v1alpha1.HostConditionReasonInvalidSelector,
+				"HostSelector is required for host selection",
+			)
+			return ctrl.Result{}, nil
+		}
+
+		// Clone selector labels without additional fields
 		matchExpressions := maps.Clone(bareMetalInstance.Spec.Selector.HostSelector)
-		if matchExpressions == nil {
-			matchExpressions = map[string]string{}
-		}
-		matchExpressions["hostType"] = bareMetalInstance.Spec.HostType
-		if v, ok := matchExpressions["managedBy"]; !ok || v == "" {
-			matchExpressions["managedBy"] = shared.OsacDefaultManagedByValue
-		}
-		if v, ok := matchExpressions["provisionState"]; !ok || v == "" {
-			matchExpressions["provisionState"] = shared.OsacDefaultProvisionStateValue
-		}
 
 		inventoryHost, err := r.InventoryClient.FindFreeHost(ctx, matchExpressions)
 		if err != nil {
@@ -277,13 +286,19 @@ func (r *BareMetalInstanceReconciler) reconcileInventory(ctx context.Context, ba
 			bareMetalInstance.SetStatusCondition(
 				v1alpha1.HostConditionAllocated,
 				metav1.ConditionFalse,
-				"Failed",
+				v1alpha1.HostConditionReasonNoMatchingHosts,
 				"No matching hosts available",
 			)
 			return ctrl.Result{RequeueAfter: r.NoFreeHostsPollIntervalDuration}, nil
 		}
 
 		bareMetalInstance.Spec.ExternalHostID = inventoryHost.InventoryHostID
+		bareMetalInstance.SetStatusCondition(
+			v1alpha1.HostConditionAllocated,
+			metav1.ConditionTrue,
+			"Allocated",
+			"Host allocated successfully",
+		)
 		if err := r.Update(ctx, bareMetalInstance); err != nil {
 			log.Error(err, "Failed to update BareMetalInstance CR with ExternalHostID", "InventoryHostID", inventoryHost.InventoryHostID)
 			return ctrl.Result{}, err
@@ -619,7 +634,6 @@ func (r *BareMetalInstanceReconciler) reconcileNetworkProvisionAndDiscovery(ctx 
 
 func (r *BareMetalInstanceReconciler) reconcileProvisioning(ctx context.Context, bareMetalInstance *v1alpha1.BareMetalInstance) (ctrl.Result, error) {
 	desiredVersion, err := provisioning.ComputeDesiredConfigVersion(struct {
-		HostType                  string
 		ExternalHostID            string
 		ExternalHostName          string
 		HostClass                 string
@@ -629,7 +643,6 @@ func (r *BareMetalInstanceReconciler) reconcileProvisioning(ctx context.Context,
 		TemplateID                string
 		TemplateParameters        string
 	}{
-		bareMetalInstance.Spec.HostType,
 		bareMetalInstance.Spec.ExternalHostID,
 		bareMetalInstance.Spec.ExternalHostName,
 		bareMetalInstance.Spec.HostClass,
