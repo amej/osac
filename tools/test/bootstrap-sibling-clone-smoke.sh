@@ -57,6 +57,8 @@ if [[ " \$* " == *" clone "* ]]; then
   "\$REAL" -C "\$dest" -c user.email=smoke@test -c user.name=smoke \
     commit -q --allow-empty -m seed
   "\$REAL" -C "\$dest" remote add origin "\$url"
+  "\$REAL" -C "\$dest" config branch.main.remote origin
+  "\$REAL" -C "\$dest" config branch.main.merge refs/heads/main
   if [[ "\$(basename "\$dest")" == "${AI_WORKFLOWS_NAME}" ]]; then
     printf '#!/bin/sh\\necho stub-install\\nexit 0\\n' > "\$dest/install.sh"
     chmod +x "\$dest/install.sh"
@@ -64,6 +66,9 @@ if [[ " \$* " == *" clone "* ]]; then
   exit 0
 fi
 if [[ " \$* " == *" fetch "* ]] || [[ " \$* " == *" rebase "* ]]; then
+  if [[ -n "\${OSAC_SMOKE_GIT_LOG:-}" ]]; then
+    printf '%s\\n' "\$*" >> "\$OSAC_SMOKE_GIT_LOG"
+  fi
   exit 0
 fi
 exec "\$REAL" "\$@"
@@ -177,15 +182,18 @@ run_bootstrap() {
   HOME="$home" PATH="${bin}:${PATH}" \
     OSAC_SMOKE_CLONE_LOG="${home}/clone.log" \
     OSAC_SMOKE_GH_LOG="${home}/gh.log" \
+    OSAC_SMOKE_GIT_LOG="${home}/git.log" \
     bash "${root}/tools/bootstrap.sh" --no-fork "$@"
 }
 
 run_bootstrap_fork() {
   local root="$1" home="$2" bin="$3"
+  shift 3
   HOME="$home" PATH="${bin}:${PATH}" \
     OSAC_SMOKE_CLONE_LOG="${home}/clone.log" \
     OSAC_SMOKE_GH_LOG="${home}/gh.log" \
-    bash "${root}/tools/bootstrap.sh"
+    OSAC_SMOKE_GIT_LOG="${home}/git.log" \
+    bash "${root}/tools/bootstrap.sh" "$@"
 }
 
 assert_no_fork_remote() {
@@ -195,13 +203,85 @@ assert_no_fork_remote() {
   fi
 }
 
+assert_no_named_remote() {
+  local dest="$1" remote="$2" label="$3"
+  if git -C "$dest" remote get-url "$remote" >/dev/null 2>&1; then
+    fail "$label must not have remote ${remote}: $(git -C "$dest" remote -v)"
+  fi
+}
+
+assert_url_suffix() {
+  local url="$1" suffix="$2" label="$3"
+  [[ "${url%.git}" == *"/${suffix}" || "${url%.git}" == *":${suffix}" ]] \
+    || fail "${label} expected ${suffix}, got: $url"
+}
+
+assert_remote_push_urls() {
+  local dest="$1" remote="$2" suffix="$3"
+  local push_urls push_url
+  push_urls=$(git -C "$dest" remote get-url --push --all "$remote" 2>/dev/null) \
+    || fail "missing push URL for ${remote} on ${dest}"
+  [[ -n "$push_urls" ]] || fail "empty push URL list for ${remote} on ${dest}"
+  while IFS= read -r push_url; do
+    [[ -n "$push_url" ]] || continue
+    assert_url_suffix "$push_url" "$suffix" "push URL for ${remote} on ${dest}"
+  done <<< "$push_urls"
+}
+
+assert_remote_url() {
+  local dest="$1" remote="$2" suffix="$3"
+  local url
+  url=$(git -C "$dest" remote get-url "$remote" 2>/dev/null) \
+    || fail "missing remote ${remote} on ${dest}: $(git -C "$dest" remote -v 2>/dev/null || true)"
+  assert_url_suffix "$url" "$suffix" "remote ${remote} on ${dest}"
+  assert_remote_push_urls "$dest" "$remote" "$suffix"
+}
+
 assert_fork_remote() {
   local dest="$1" repo="$2"
   local url
   url=$(git -C "$dest" remote get-url fork 2>/dev/null) \
     || fail "missing fork remote on ${dest}: $(git -C "$dest" remote -v 2>/dev/null || true)"
-  [[ "${url%.git}" == *"/smokeuser/${repo}" || "${url%.git}" == *":smokeuser/${repo}" ]] \
-    || fail "fork remote on ${dest} expected smokeuser/${repo}, got: $url"
+  assert_url_suffix "$url" "smokeuser/${repo}" "fork remote on ${dest}"
+  assert_remote_push_urls "$dest" fork "smokeuser/${repo}"
+}
+
+seed_osac_root_git() {
+  local root="$1"
+  "$REAL_GIT" init -q "$root"
+  "$REAL_GIT" -C "$root" checkout -q -b main
+  "$REAL_GIT" -C "$root" remote add origin "https://github.com/smokeuser/osac.git"
+}
+
+assert_osac_root_untouched() {
+  local root="$1"
+  assert_remote_url "$root" origin "smokeuser/osac"
+  assert_no_named_remote "$root" upstream "PROJECT_ROOT"
+  assert_no_named_remote "$root" fork "PROJECT_ROOT"
+}
+
+assert_vendor_untouched() {
+  local dest="$1" label="$2" orig="$3"
+  [[ "$(git -C "$dest" remote get-url origin)" == "$orig" ]] \
+    || fail "$label origin changed: $(git -C "$dest" remote -v)"
+  assert_no_named_remote "$dest" fork "$label"
+  assert_no_named_remote "$dest" upstream "$label"
+}
+
+assert_branch_tracks() {
+  local dest="$1" branch="$2" remote="$3"
+  local got
+  got=$(git -C "$dest" config --get "branch.${branch}.remote" 2>/dev/null || true)
+  [[ "$got" == "$remote" ]] \
+    || fail "${dest} branch ${branch} should track ${remote}, got: ${got:-unset}"
+}
+
+assert_origin_layout_writeable() {
+  local dest="$1" repo="$2"
+  assert_remote_url "$dest" origin "smokeuser/${repo}"
+  assert_remote_url "$dest" upstream "osac-project/${repo}"
+  assert_no_named_remote "$dest" fork "$(basename "$dest")"
+  assert_branch_tracks "$dest" main origin
 }
 
 assert_expected_clones() {
@@ -421,20 +501,56 @@ test_expected_sibling_requires_origin_remote() {
   ep="${root}/enhancement-proposals"
 
   run_bootstrap "$root" "$home" "$bin" >/dev/null
+  setup_unrelated_origin_extra_org "$ep"
+  out=$(run_bootstrap "$root" "$home" "$bin" 2>&1) || fail "bootstrap failed: $out"
+  assert_unrelated_origin_skipped "$out" "$ep"
+  pass "expected-clone match uses origin only, not other remotes"
+}
+
+setup_unrelated_origin_extra_org() {
+  local ep="$1"
   "$REAL_GIT" -C "$ep" remote set-url origin \
     "https://github.com/unrelated/enhancement-proposals.git"
   "$REAL_GIT" -C "$ep" remote add extra \
     "https://github.com/osac-project/enhancement-proposals.git"
   echo keep > "${ep}/keep-me"
+}
 
-  out=$(run_bootstrap "$root" "$home" "$bin" 2>&1) || fail "bootstrap failed: $out"
+assert_unrelated_origin_skipped() {
+  local out="$1" ep="$2"
   echo "$out" | grep -qi 'skip' \
     || fail "non-origin osac-project remote must not count as expected clone: $out"
   echo "$out" | grep -q 'Updating enhancement-proposals' \
     && fail "must not update when origin is unrelated: $out"
   grep -q keep "${ep}/keep-me" \
     || fail "dir with unrelated origin was overwritten"
-  pass "expected-clone match uses origin only, not other remotes"
+}
+
+test_expected_sibling_requires_origin_remote_when_forking() {
+  local home root bin home_skills home_workflows repo_skills clone_log out ep
+  prepare_fixture origin-only-fork
+  write_gh_wrapper "${bin}/gh"
+  ep="${root}/enhancement-proposals"
+
+  run_bootstrap "$root" "$home" "$bin" >/dev/null
+  setup_unrelated_origin_extra_org "$ep"
+  out=$(run_bootstrap_fork "$root" "$home" "$bin" 2>&1) || fail "bootstrap failed: $out"
+  assert_unrelated_origin_skipped "$out" "$ep"
+  pass "expected-clone origin-only still holds on the default fork path"
+}
+
+test_expected_sibling_requires_origin_remote_with_fork_name_origin() {
+  local home root bin home_skills home_workflows repo_skills clone_log out ep
+  prepare_fixture origin-only-fork-name
+  write_gh_wrapper "${bin}/gh"
+  ep="${root}/enhancement-proposals"
+
+  run_bootstrap "$root" "$home" "$bin" >/dev/null
+  setup_unrelated_origin_extra_org "$ep"
+  out=$(run_bootstrap_fork "$root" "$home" "$bin" --fork-name origin 2>&1) \
+    || fail "bootstrap failed: $out"
+  assert_unrelated_origin_skipped "$out" "$ep"
+  pass "expected-clone origin-only still holds with --fork-name origin"
 }
 
 test_missing_gh_without_no_fork_exits() {
@@ -527,7 +643,7 @@ test_forks_writeable_siblings_not_osac_ux_or_vendors() {
   assert_expected_clones "$root" "$clone_log"
   assert_fork_remote "${root}/enhancement-proposals" "enhancement-proposals"
   assert_fork_remote "${root}/osac-ui" "osac-ui"
-  assert_fork_remote "${root}/osac-docs" "docs"
+  assert_fork_remote "${root}/osac-docs" "osac-docs"
   assert_no_fork_remote "${root}/osac-ux" "osac-ux"
   assert_no_fork_remote "$home_skills" "osac-ai-skills vendor"
   assert_no_fork_remote "$home_workflows" "ai-workflows vendor"
@@ -535,6 +651,8 @@ test_forks_writeable_siblings_not_osac_ux_or_vendors() {
     || fail "expected gh repo fork for enhancement-proposals: $(cat "$gh_log")"
   grep -q 'repo fork osac-project/docs' "$gh_log" \
     || fail "docs fork must use GitHub repo name docs: $(cat "$gh_log")"
+  grep -q 'fork-name osac-docs' "$gh_log" \
+    || fail "docs fork must pass --fork-name osac-docs: $(cat "$gh_log")"
   if grep -q 'repo fork osac-project/osac-ux' "$gh_log"; then
     fail "must not gh fork osac-ux: $(cat "$gh_log")"
   fi
@@ -558,7 +676,7 @@ test_rerun_adds_fork_remote_to_existing_clone() {
   : > "${home}/gh.log"
   out=$(run_bootstrap_fork "$root" "$home" "$bin" 2>&1) || fail "fork re-run failed: $out"
   assert_fork_remote "$ep" "enhancement-proposals"
-  assert_fork_remote "${root}/osac-docs" "docs"
+  assert_fork_remote "${root}/osac-docs" "osac-docs"
   assert_no_fork_remote "${root}/osac-ux" "osac-ux"
   echo "$out" | grep -q 'Adding fork remote for enhancement-proposals' \
     || fail "re-run should add missing fork remotes: $out"
@@ -574,6 +692,8 @@ test_unrelated_same_name_github_repo_is_not_used_as_fork() {
     || fail "bootstrap should continue when docs fork collides: $out"
   echo "$out" | grep -qi 'Failed to fork osac-project/docs' \
     || fail "expected skip for unrelated github.com/smokeuser/docs: $out"
+  grep -q 'repo view smokeuser/osac-docs' "${home}/gh.log" \
+    || fail "parent check must view smokeuser/osac-docs: $(cat "${home}/gh.log")"
   assert_no_fork_remote "${root}/osac-docs" "osac-docs after docs name collision"
   assert_fork_remote "${root}/enhancement-proposals" "enhancement-proposals"
   pass "does not point fork at an unrelated same-name GitHub repo"
@@ -632,15 +752,229 @@ test_fork_remote_match_requires_user_boundary() {
 
   run_bootstrap "$root" "$home" "$bin" >/dev/null
   "$REAL_GIT" -C "$docs_dest" remote add fork \
-    "https://github.com/evilsmokeuser/docs.git"
+    "https://github.com/evilsmokeuser/osac-docs.git"
 
   out=$(run_bootstrap_fork "$root" "$home" "$bin" 2>&1) || fail "bootstrap failed: $out"
   echo "$out" | grep -q 'already exists with a different URL' \
-    || fail "evilsmokeuser/docs must not count as smokeuser/docs: $out"
+    || fail "evilsmokeuser/osac-docs must not count as smokeuser/osac-docs: $out"
   url=$(git -C "$docs_dest" remote get-url fork)
-  [[ "$url" == *evilsmokeuser/docs* ]] \
+  [[ "$url" == *evilsmokeuser/osac-docs* ]] \
     || fail "must not overwrite an existing mismatched fork remote: $url"
   pass "fork-remote match requires / or : before \$GH_USER/repo"
+}
+
+test_fork_name_requires_value() {
+  local home root bin home_skills home_workflows repo_skills clone_log out rc
+  prepare_fixture fork-name-val
+  write_gh_wrapper "${bin}/gh"
+
+  set +e
+  out=$(HOME="$home" PATH="${bin}:${PATH}" bash "${root}/tools/bootstrap.sh" --fork-name 2>&1)
+  rc=$?
+  set -e
+  [[ "$rc" -ne 0 ]] || fail "expected non-zero for --fork-name without a value: $out"
+  echo "$out" | grep -qi 'fork-name requires a value' \
+    || fail "expected --fork-name value error: $out"
+  pass "--fork-name requires a value"
+}
+
+test_fork_name_rejects_option_as_value() {
+  local home root bin home_skills home_workflows repo_skills clone_log out rc
+  local gh_log
+  prepare_fixture fork-name-opt-val
+  write_gh_wrapper "${bin}/gh"
+  gh_log="${home}/gh.log"
+
+  set +e
+  out=$(HOME="$home" PATH="${bin}:${PATH}" OSAC_SMOKE_GH_LOG="$gh_log" \
+    bash "${root}/tools/bootstrap.sh" --fork-name --no-fork 2>&1)
+  rc=$?
+  set -e
+  [[ "$rc" -ne 0 ]] || fail "expected non-zero for --fork-name --no-fork: $out"
+  echo "$out" | grep -qi 'fork-name requires a value' \
+    || fail "expected --fork-name value error for option-as-value: $out"
+  if [[ -f "$gh_log" ]] && grep -q 'repo fork' "$gh_log"; then
+    fail "must not call gh repo fork when --fork-name value is another option: $(cat "$gh_log")"
+  fi
+  pass "--fork-name rejects another option as its value"
+}
+
+test_fork_name_origin_renames_org_origin() {
+  local home root bin home_skills home_workflows repo_skills clone_log out
+  local skills_origin wf_origin gh_log
+  prepare_fixture fork-name-origin
+  write_gh_wrapper "${bin}/gh"
+  seed_osac_root_git "$root"
+  skills_origin=$(git -C "$home_skills" remote get-url origin)
+  wf_origin=$(git -C "$home_workflows" remote get-url origin)
+  gh_log="${home}/gh.log"
+
+  out=$(run_bootstrap_fork "$root" "$home" "$bin" --fork-name origin 2>&1) \
+    || fail "bootstrap --fork-name origin failed: $out"
+
+  assert_origin_layout_writeable "${root}/enhancement-proposals" "enhancement-proposals"
+  assert_origin_layout_writeable "${root}/osac-ui" "osac-ui"
+  assert_remote_url "${root}/osac-docs" origin "smokeuser/osac-docs"
+  assert_remote_url "${root}/osac-docs" upstream "osac-project/docs"
+  assert_no_named_remote "${root}/osac-docs" fork "osac-docs"
+  assert_remote_url "${root}/osac-ux" origin "osac-project/osac-ux"
+  assert_no_named_remote "${root}/osac-ux" fork "osac-ux"
+  assert_no_named_remote "${root}/osac-ux" upstream "osac-ux"
+  assert_vendor_untouched "$home_skills" "osac-ai-skills vendor" "$skills_origin"
+  assert_vendor_untouched "$home_workflows" "ai-workflows vendor" "$wf_origin"
+  assert_osac_root_untouched "$root"
+  if grep -q 'repo fork osac-project/osac-ux' "$gh_log"; then
+    fail "must not gh fork osac-ux: $(cat "$gh_log")"
+  fi
+  if grep -q 'repo fork osac-project/osac-ai-skills' "$gh_log"; then
+    fail "must not gh fork osac-ai-skills: $(cat "$gh_log")"
+  fi
+  pass "--fork-name origin renames org origin on writeable siblings only"
+}
+
+test_fork_name_origin_rerun_is_idempotent() {
+  local home root bin home_skills home_workflows repo_skills clone_log out ep git_log
+  prepare_fixture fork-name-origin-rerun
+  write_gh_wrapper "${bin}/gh"
+  git_log="${home}/git.log"
+
+  run_bootstrap_fork "$root" "$home" "$bin" --fork-name origin >/dev/null
+  ep="${root}/enhancement-proposals"
+  : > "$git_log"
+  out=$(run_bootstrap_fork "$root" "$home" "$bin" --fork-name origin 2>&1) \
+    || fail "re-run --fork-name origin failed: $out"
+  echo "$out" | grep -q 'Updating enhancement-proposals' \
+    || fail "re-run should update origin-as-fork siblings: $out"
+  echo "$out" | grep -qi 'skipping enhancement-proposals' \
+    && fail "must not skip writeable sibling on --fork-name origin re-run: $out"
+  grep -qE '(^| )fetch upstream( |$)' "$git_log" \
+    || fail "re-run must fetch upstream for origin-as-fork siblings: $(cat "$git_log")"
+  grep -qE '(^| )rebase upstream/main( |$)' "$git_log" \
+    || fail "re-run must rebase onto upstream/main: $(cat "$git_log")"
+  assert_origin_layout_writeable "$ep" "enhancement-proposals"
+  assert_no_named_remote "$ep" osac-upstream "enhancement-proposals"
+  echo "$out" | grep -q 'Updating osac-docs' \
+    || fail "re-run should update origin-as-fork osac-docs: $out"
+  echo "$out" | grep -qi 'skipping osac-docs' \
+    && fail "must not skip osac-docs on --fork-name origin re-run: $out"
+  assert_remote_url "${root}/osac-docs" origin "smokeuser/osac-docs"
+  assert_remote_url "${root}/osac-docs" upstream "osac-project/docs"
+  assert_no_named_remote "${root}/osac-docs" fork "osac-docs"
+  pass "--fork-name origin re-run updates via upstream and does not rename again"
+}
+
+test_fork_name_origin_uses_osac_upstream_when_upstream_taken() {
+  local home root bin home_skills home_workflows repo_skills clone_log out ep url
+  prepare_fixture fork-name-osac-upstream
+  write_gh_wrapper "${bin}/gh"
+  ep="${root}/enhancement-proposals"
+
+  run_bootstrap "$root" "$home" "$bin" >/dev/null
+  "$REAL_GIT" -C "$ep" remote add upstream "https://github.com/example/placeholder.git"
+  out=$(run_bootstrap_fork "$root" "$home" "$bin" --fork-name origin 2>&1) \
+    || fail "--fork-name origin with upstream taken failed: $out"
+  assert_remote_url "$ep" origin "smokeuser/enhancement-proposals"
+  assert_remote_url "$ep" osac-upstream "osac-project/enhancement-proposals"
+  url=$(git -C "$ep" remote get-url upstream)
+  [[ "$url" == *example/placeholder* ]] \
+    || fail "pre-existing upstream must be left in place, got: $url"
+  assert_branch_tracks "$ep" main origin
+  pass "--fork-name origin uses osac-upstream when upstream exists"
+}
+
+test_fork_name_origin_renames_when_only_pushurl_is_fork() {
+  local home root bin home_skills home_workflows repo_skills clone_log out ep
+  prepare_fixture fork-name-origin-pushurl
+  write_gh_wrapper "${bin}/gh"
+  ep="${root}/enhancement-proposals"
+
+  run_bootstrap "$root" "$home" "$bin" >/dev/null
+  "$REAL_GIT" -C "$ep" remote set-url --push origin \
+    "https://github.com/smokeuser/enhancement-proposals.git"
+  out=$(run_bootstrap_fork "$root" "$home" "$bin" --fork-name origin 2>&1) \
+    || fail "--fork-name origin with fork-only pushurl failed: $out"
+  assert_origin_layout_writeable "$ep" "enhancement-proposals"
+  pass "--fork-name origin renames when only origin pushurl is the fork"
+}
+
+test_fork_name_origin_rename_does_not_log_remote_url() {
+  local home root bin home_skills home_workflows repo_skills clone_log out ep
+  local cred_url
+  prepare_fixture fork-name-origin-no-url-log
+  write_gh_wrapper "${bin}/gh"
+  ep="${root}/enhancement-proposals"
+  cred_url="https://user:s3cret@github.com/osac-project/enhancement-proposals.git"
+
+  run_bootstrap "$root" "$home" "$bin" >/dev/null
+  "$REAL_GIT" -C "$ep" remote set-url origin "$cred_url"
+  out=$(run_bootstrap_fork "$root" "$home" "$bin" --fork-name origin 2>&1) \
+    || fail "--fork-name origin with credential origin failed: $out"
+  echo "$out" | grep -q "s3cret" \
+    && fail "rename log must not print remote credentials: $out"
+  echo "$out" | grep -qE "Renamed existing 'origin' → 'upstream'" \
+    || fail "expected names-only rename log: $out"
+  assert_origin_layout_writeable "$ep" "enhancement-proposals"
+  pass "--fork-name origin rename log omits remote URL"
+}
+
+test_no_fork_with_fork_name_origin_is_read_only() {
+  local home root bin home_skills home_workflows repo_skills clone_log out
+  local skills_origin
+  prepare_fixture nofork-fork-name
+  write_gh_wrapper "${bin}/gh"
+  seed_osac_root_git "$root"
+  skills_origin=$(git -C "$home_skills" remote get-url origin)
+
+  out=$(run_bootstrap "$root" "$home" "$bin" --fork-name origin 2>&1) \
+    || fail "--no-fork --fork-name origin failed: $out"
+  echo "$out" | grep -q 'read-only, no forks' \
+    || fail "expected read-only banner: $out"
+  assert_expected_clones "$root" "$clone_log"
+  assert_remote_url "${root}/osac-ui" origin "osac-project/osac-ui"
+  assert_no_named_remote "${root}/osac-ui" upstream "osac-ui"
+  assert_no_fork_remote "${root}/osac-ui" "osac-ui"
+  assert_remote_url "${root}/osac-ux" origin "osac-project/osac-ux"
+  assert_vendor_untouched "$home_skills" "osac-ai-skills vendor" "$skills_origin"
+  assert_osac_root_untouched "$root"
+  [[ ! -s "${home}/gh.log" ]] || fail "--no-fork --fork-name origin must not invoke gh: $(cat "${home}/gh.log")"
+  pass "--no-fork wins over --fork-name origin"
+}
+
+test_docs_fork_uses_osac_docs_github_name() {
+  local home root bin home_skills home_workflows repo_skills clone_log out gh_log
+  local skills_origin
+  prepare_fixture docs-fork-name
+  write_gh_wrapper "${bin}/gh"
+  gh_log="${home}/gh.log"
+  skills_origin=$(git -C "$home_skills" remote get-url origin)
+
+  out=$(run_bootstrap_fork "$root" "$home" "$bin" 2>&1) || fail "bootstrap failed: $out"
+  assert_fork_remote "${root}/osac-docs" "osac-docs"
+  grep -q 'fork-name osac-docs' "$gh_log" \
+    || fail "expected gh repo fork --fork-name osac-docs: $(cat "$gh_log")"
+  assert_vendor_untouched "$home_skills" "osac-ai-skills vendor" "$skills_origin"
+  assert_no_fork_remote "${root}/osac-ux" "osac-ux"
+  pass "docs GitHub fork name is osac-docs, not docs"
+}
+
+test_fork_overrides_file_can_remap_docs() {
+  local home root bin home_skills home_workflows repo_skills clone_log out
+  local skills_origin
+  prepare_fixture docs-override
+  write_gh_wrapper "${bin}/gh"
+  skills_origin=$(git -C "$home_skills" remote get-url origin)
+  cat > "${root}/tools/fork-overrides.sh" <<'EOF'
+FORK_OVERRIDE_PAIRS=("docs:custom-docs")
+EOF
+
+  out=$(run_bootstrap_fork "$root" "$home" "$bin" 2>&1) || fail "bootstrap failed: $out"
+  assert_fork_remote "${root}/osac-docs" "custom-docs"
+  grep -q 'fork-name custom-docs' "${home}/gh.log" \
+    || fail "override must pass --fork-name custom-docs: $(cat "${home}/gh.log")"
+  assert_fork_remote "${root}/osac-ui" "osac-ui"
+  assert_vendor_untouched "$home_skills" "osac-ai-skills vendor" "$skills_origin"
+  assert_no_fork_remote "${root}/osac-ux" "osac-ux"
+  pass "tools/fork-overrides.sh can remap docs without affecting ux/vendors"
 }
 
 test_home_git_subdir_skills_falls_back_to_repo_local() {
@@ -751,6 +1085,8 @@ test_nested_abort_skips_sibling_clones
 test_failed_clone_cleans_dest
 test_expected_sibling_requires_org_boundary
 test_expected_sibling_requires_origin_remote
+test_expected_sibling_requires_origin_remote_when_forking
+test_expected_sibling_requires_origin_remote_with_fork_name_origin
 test_missing_gh_without_no_fork_exits
 test_empty_gh_user_without_no_fork_exits
 test_null_gh_user_without_no_fork_exits
@@ -761,6 +1097,16 @@ test_unrelated_same_name_github_repo_is_not_used_as_fork
 test_home_worktree_vendor_is_updated_not_recloned
 test_skips_update_when_sibling_not_on_main
 test_fork_remote_match_requires_user_boundary
+test_fork_name_requires_value
+test_fork_name_rejects_option_as_value
+test_fork_name_origin_renames_org_origin
+test_fork_name_origin_rerun_is_idempotent
+test_fork_name_origin_uses_osac_upstream_when_upstream_taken
+test_fork_name_origin_renames_when_only_pushurl_is_fork
+test_fork_name_origin_rename_does_not_log_remote_url
+test_no_fork_with_fork_name_origin_is_read_only
+test_docs_fork_uses_osac_docs_github_name
+test_fork_overrides_file_can_remap_docs
 test_home_git_subdir_skills_falls_back_to_repo_local
 test_repo_local_leftover_ai_workflows_errors_without_updating
 test_repo_local_leftover_osac_ai_skills_errors_without_updating
