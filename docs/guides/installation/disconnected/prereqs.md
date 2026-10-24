@@ -5,7 +5,7 @@
 
 This guide consumes the read-only handoff from Doc 1, validates cluster access to mirrored content, configures cluster trust and pull credentials where required, records production service contracts, and builds the customer-owned OSAC values file. It does not install operators, operands, shared OSAC infrastructure, or the OSAC Helm release.
 
-Run cluster commands from a secured administration host with `oc`, `jq`, `yq`, `dig` or `nslookup`, `openssl`, `curl`, `skopeo`, `sha256sum`, and Helm installed. The host must reach the OpenShift API and mirror registry. Section 5 additionally requires a controlled workstation or bastion laptop that can reach both the public OCI chart registry and the disconnected cluster API through the approved SSH tunnel or VPN.
+Run cluster commands from a secured administration host with `oc`, `jq`, `yq`, `dig` or `nslookup`, `openssl`, `curl`, `skopeo`, `sha256sum`, Python 3, and Helm installed. The host must reach the OpenShift API and mirror registry. Section 5 additionally requires a controlled workstation or bastion laptop that can reach both the public OCI chart registry and the disconnected cluster API through the approved SSH tunnel or VPN.
 
 Install these clients only when their corresponding production service is selected:
 
@@ -13,9 +13,20 @@ Install these clients only when their corresponding production service is select
 - `vault` or `bao` for external Vault/OpenBao verification.
 - `kcat` for external Kafka verification.
 
-Log in as a cluster administrator. Replace every value enclosed in angle brackets before running a command.
+Log in as a cluster administrator. Replace every value enclosed in angle brackets before running a command. Use a dedicated, unrecorded Bash session in an owner-only working directory (0700), outside source control. Disable tracing and output collection on every participating workstation. Establish this boundary **before** setting private inputs or running probes: command stdout/stderr are discarded at source, including DNS, registry, TLS, database, Kafka and identity errors. Pipelines still pass private data between commands; do not redirect their raw output into logs. On any failure, stop for private owner investigation, never rerun with tracing enabled.
 
 ```bash
+set +x +v
+set +o history
+unset HISTFILE
+exec 3>&2
+exec >/dev/null 2>&1
+trap 'printf "%s\n" "Prerequisite gate failed; stop for private owner review" >&3' ERR
+set -euo pipefail
+umask 077
+test "$(stat -c %a .)" = 700
+test "$(stat -c %u .)" = "$(id -u)"
+export PREREQS_AUDIT="$(mktemp -d "$PWD/prereqs-audit-XXXXXX")"
 export PROFILE=core                    # core or core-vmaas
 export ENABLE_VMAAS=false              # true or false; must match Doc 1
 export WITH_LVMS=false                 # install LVMS in operators.md only when true
@@ -33,6 +44,18 @@ export OSAC_CHART_REF='oci://ghcr.io/osac-project/charts/osac'
 export OSAC_CHART_VERSION='0.0.24'
 export OSAC_NAMESPACE=osac
 ```
+
+Values, renders, discovery/CA documents, mirror inventory, selection files and
+checkpoint inputs in this working directory are **private runtime state**, not
+retained audit evidence. They are required for installation, integrity checks and
+resume; do not archive or export the directory. Export only the fresh `$PREREQS_AUDIT` directory and
+the later operators audit directory. After approved Phase 2 acceptance and the
+retry window, dispose of local private state, temporary credential/input copies
+and credentials under the site's secret-media policy; retain required cluster
+runtime inputs under their owners' policy. An owner attestation must use a fixed
+non-sensitive service identifier and outcome, never endpoint URLs, internal
+hostnames, raw logs or arbitrary diagnostic text. Refer to private inputs for
+actual endpoints and resource identities, not to audit records.
 
 > [!WARNING]
 > Use one administrator for the mutation window in Sections 2 and 3. Record current state before changing the cluster pull secret or trust configuration. Every shared-resource mutation below carries a server-enforced `resourceVersion` precondition; if another administrator changes the resource, the API rejects the stale write and you must re-read and merge again.
@@ -551,7 +574,7 @@ oc wait service/osac-prereq-lb-test -n osac-prereq-check \
 export LB_ADDRESS="$(oc get service osac-prereq-lb-test -n osac-prereq-check \
   -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}')"
 test -n "$LB_ADDRESS"
-curl --fail --connect-timeout 10 "http://${LB_ADDRESS}:8080/" >/dev/null
+curl --fail --connect-timeout 10 --max-time 20 "http://${LB_ADDRESS}:8080/" >/dev/null
 ```
 
 A failed allocation remains with the provider owner. An allocated but unreachable address remains with the site network owner. MetalLB installation belongs to `operators.md`; never copy an example range into production.
@@ -595,12 +618,10 @@ Record only the handoff:
 
 ```bash
 cat > vault-handoff.txt <<EOF
+service=vault
 canonical_guide=../secrets-management-configuration.md
-evidence_location=<approved-evidence-location>
-evidence_timestamp=<rfc3339-timestamp>
-endpoint=$VAULT_ADDR
-credential_secret=$VAULT_SECRET_NAMESPACE/$VAULT_SECRET_NAME
-ca_configmap=$VAULT_SECRET_NAMESPACE/$VAULT_CA_CONFIGMAP
+result=passed
+verified_at=$(date -u +%FT%TZ)
 EOF
 ```
 
@@ -628,23 +649,19 @@ case "$KAFKA_PROVIDER" in
 
     cat > kafka-handoff.txt <<EOF
 provider=external
+service=kafka
 canonical_guide=../kafka-configuration.md
-evidence_location=<approved-evidence-location>
-evidence_timestamp=<rfc3339-timestamp>
-endpoint=${KAFKA_HOST}:${KAFKA_PORT}
-credential_secret=$KAFKA_SECRET_NAMESPACE/$KAFKA_SECRET_NAME
-ca_configmap=$KAFKA_SECRET_NAMESPACE/$KAFKA_CA_CONFIGMAP
+result=passed
+verified_at=$(date -u +%FT%TZ)
 EOF
     ;;
   in-cluster)
     oc get packagemanifest amq-streams -n openshift-marketplace -o json       | jq -e '.status.catalogSource == "redhat-operators" and (.status.channels | any(.name == "stable"))'
     cat > kafka-handoff.txt <<EOF
 provider=in-cluster
+service=kafka
 canonical_guide=../kafka-configuration.md
-evidence_location=<operators-evidence-location>
-namespace=osac-kafka
-broker_name=<kafka-cluster-name>
-storage_class=<storage-class>
+result=deferred-to-operators
 verification_owner=operators.md
 EOF
     ;;
@@ -661,18 +678,36 @@ Success is a complete `kafka-handoff.txt`. For external Kafka, the canonical gui
 
 ```bash
 export OIDC_ISSUER='<https://keycloak.example.com/realms/osac>'
-curl --fail --silent --show-error --cacert '<absolute-path-to-idp-ca.pem>' \
+export KEYCLOAK_ALLOWED_HOSTS='<comma-separated-exact-approved-keycloak-hostnames>'
+cat > check-prereq-oidc.py <<'PY'
+import json, os, sys
+from urllib.parse import urlsplit
+allowed = {host.strip().lower() for host in os.environ["KEYCLOAK_ALLOWED_HOSTS"].split(",") if host.strip()}
+def checked(url):
+    parsed = urlsplit(url)
+    if (not allowed or parsed.scheme != "https" or not parsed.hostname or
+        parsed.hostname.lower() not in allowed or parsed.username is not None or
+        parsed.password is not None or parsed.fragment or parsed.query):
+        raise SystemExit("Unapproved identity endpoint")
+checked(os.environ["OIDC_ISSUER"])
+if len(sys.argv) > 1:
+    discovery = json.load(open(sys.argv[1]))
+    if discovery["issuer"] != os.environ["OIDC_ISSUER"]:
+        raise SystemExit("Identity issuer mismatch")
+    for key in ("authorization_endpoint", "token_endpoint", "jwks_uri"):
+        checked(discovery[key])
+PY
+python3 check-prereq-oidc.py
+curl --proto '=https' --fail --silent --show-error --connect-timeout 10 --max-time 30 \
+  --cacert '<absolute-path-to-idp-ca.pem>' \
   "$OIDC_ISSUER/.well-known/openid-configuration" \
-  | tee /tmp/osac-oidc-discovery.json \
-  | jq -e --arg issuer "$OIDC_ISSUER" '
-      .issuer == $issuer and
-      (.authorization_endpoint | length > 0) and
-      (.token_endpoint | length > 0) and
-      (.jwks_uri | length > 0)'
-curl --fail --silent --show-error --cacert '<absolute-path-to-idp-ca.pem>' \
-  "$(jq -r '.jwks_uri' /tmp/osac-oidc-discovery.json)" \
+  > oidc-discovery-private.json
+python3 check-prereq-oidc.py oidc-discovery-private.json
+curl --proto '=https' --fail --silent --show-error --connect-timeout 10 --max-time 30 \
+  --cacert '<absolute-path-to-idp-ca.pem>' \
+  "$(jq -er '.jwks_uri' oidc-discovery-private.json)" \
   | jq -e '.keys | length > 0'
-rm -f /tmp/osac-oidc-discovery.json
+rm -f oidc-discovery-private.json
 ```
 
 Success is an exact issuer match, nonempty endpoints, and at least one signing key. Verify client authentication and role mapping through the site's approved process.
@@ -831,52 +866,108 @@ Do not edit `rendered-osac.yaml`; correct `values-osac.yaml` and render again.
 
 ## Completion Record
 
-```bash
-cat > prereqs-completion.txt <<EOF
-completed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-operator=$(oc whoami)
-profile=$PROFILE
-enable_vmaas=$ENABLE_VMAAS
-with_lvms=$WITH_LVMS
-with_metallb=$WITH_METALLB
-doc1_isc=$DOC1_WORKSPACE/../imageset-config.yaml
-doc1_workspace=$DOC1_WORKSPACE
-operatorhub_disable_all_default_sources=true
-idms_names=$(oc get imagedigestmirrorset -o name | paste -sd, -)
-itms_names=$(oc get imagetagmirrorset -o name | paste -sd, -)
-catalog_source=openshift-marketplace/redhat-operators
-cluster_catalogs=$(oc get -f "$GENERATED_CLUSTER_CATALOG" -o name | paste -sd, -)
-signature_configmaps=$(oc get configmap -n openshift-config-managed -l operator.openshift.io/managed=true -o name | paste -sd, -)
-mirror_host=$MIRROR_HOST
-affected_mcps=$AFFECTED_POOLS
-storage_class=$STORAGE_CLASS
-loadbalancer_provider=$LOADBALANCER_PROVIDER
-postgres_endpoint=<postgres-host-and-port>
-vault_endpoint=<vault-or-openbao-url>
-vault_credential_secret=<namespace/name>
-vault_ca_configmap=<namespace/name>
-vault_canonical_evidence=<location-and-rfc3339-timestamp>
-kafka_provider=$KAFKA_PROVIDER
-kafka_endpoint=<external-endpoint-or-in-cluster-broker-name>
-kafka_credential_secret=<namespace/name-or-pending-operators>
-kafka_ca_configmap=<namespace/name-or-pending-operators>
-kafka_canonical_evidence=<location-and-rfc3339-timestamp>
-oidc_issuer=<oidc-issuer-url>
-chart_reference=$OSAC_CHART_REF
-chart_version=$OSAC_CHART_VERSION
-values_sha256=$(sha256sum values-osac.yaml | awk '{print $1}')
-render_sha256=$(sha256sum rendered-osac.yaml | awk '{print $1}')
-evidence_checksums=prereqs-artifacts.sha256
-EOF
+Keep `prereqs-completion.txt` and `prerequisite-selection.env` as private runtime
+inputs: the operators gate consumes their six exact selections and original
+values digest. Endpoint addresses remain in protected values, never in handoffs.
+Create this shared allowlist writer for both guides. It constructs the entire
+record before emitting anything; arbitrary source paths, hostnames, users,
+messages and credential-derived hashes have no output field. Values must contain
+references to credentials, never credential bytes. Checksums bind configuration
+and private ownership/checkpoint records without disclosing their contents.
 
-for pool in $AFFECTED_POOLS; do
-  oc get machineconfigpool "$pool" \
-    -o custom-columns='NAME:.metadata.name,PAUSED:.spec.paused,GEN:.metadata.generation,OBSERVED:.status.observedGeneration,UPDATED:.status.updatedMachineCount,UNAVAILABLE:.status.unavailableMachineCount,DEGRADED:.status.degradedMachineCount' \
-    --no-headers >> prereqs-completion.txt
-done
+```bash
+cat > audit-record.py <<'PY'
+import csv, hashlib, json, os, re, sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+def checksum(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+def choice(name, choices):
+    value = os.environ[name]
+    if value not in choices: raise SystemExit("Invalid audit choice")
+    return value
+
+phase = sys.argv[1]
+if phase not in ("prereqs", "operators"): raise SystemExit("Invalid audit phase")
+record = {"schema_version": 1, "phase": phase, "release": "0.0.24", "result": "passed",
+          "completed_at": datetime.now(timezone.utc).isoformat(),
+          "vmaas": choice("ENABLE_VMAAS", ("true", "false")),
+          "with_lvms": choice("WITH_LVMS", ("true", "false")),
+          "with_metallb": choice("WITH_METALLB", ("true", "false")),
+          "kafka_provider": choice("KAFKA_PROVIDER", ("external", "in-cluster"))}
+record["values_sha256"] = checksum(os.environ.get("VALUES_FILE", "values-osac.yaml"))
+if phase == "prereqs":
+    record["profile"] = choice("PROFILE", ("core", "core-vmaas"))
+    record["prereqs_record_sha256"] = checksum("prereqs-completion.txt")
+    record["artifacts_index_sha256"] = checksum("prereqs-artifacts.sha256")
+else:
+    state = Path(os.environ["STATE"])
+    commit = os.environ["AAP_COMMIT"]
+    if not re.fullmatch(r"[0-9a-f]{40}", commit): raise SystemExit("Invalid source pin")
+    record["aap_expected_commit"] = commit
+    record["aap_service"] = "aap-project-source"
+    record["actual_sync_verification_owner"] = "installation.md"
+    record["actual_client_tls_verification_owner"] = "installation.md"
+    record["aap_insecure_skip_verify"] = False
+    for name in ("resume-context.json", "resources.tsv", "csvs.tsv", "aap-git-handoff.txt",
+                 "aap-tls-handoff.txt", "bootstrap-responsibilities.tsv", "final-render.sha256",
+                 "signer-bundle-binding.json", "db-phase2-contract.json", "secret-contracts.json",
+                 "secret-contract-verification.json", "bundle-runtime.json", "ca-bundle-target.json"):
+        record[name + "_sha256"] = checksum(state / name)
+    expected = {"configure-kafka", "configure-metallb", "apply-ca-bundle", "wait-keycloak",
+                "keycloak-set-passwords", "create-creds", "create-ui-backend-creds"}
+    ledger = {}
+    with (state / "bootstrap-responsibilities.tsv").open() as source:
+        for row in csv.DictReader(source, delimiter="\t"):
+            name, outcome = row["responsibility"], row["outcome"]
+            if name not in expected or name in ledger: raise SystemExit("Invalid responsibility")
+            allowed = {"passed"}
+            if name == "keycloak-set-passwords": allowed = {"skipped-production-fixture"}
+            if name == "configure-metallb" and record["vmaas"] == "false":
+                allowed = {"skipped-profile-disabled"}
+            if name == "configure-kafka" and record["kafka_provider"] == "external":
+                allowed.add("skipped-external-provider")
+            if outcome not in allowed: raise SystemExit("Incomplete active responsibility")
+            ledger[name] = outcome
+    if set(ledger) != expected: raise SystemExit("Missing responsibility")
+    record["responsibilities"] = ledger
+json.dump(record, sys.stdout, sort_keys=True, indent=2)
+print()
+PY
 ```
 
-Replace every angle-bracket field before storing the record. Do not record credentials.
+```bash
+python3 - <<'PY' > prereqs-completion.txt
+import hashlib, os, re
+from pathlib import Path
+record = {}
+for key, choices in {
+    "profile": ("core", "core-vmaas"), "enable_vmaas": ("true", "false"),
+    "with_lvms": ("true", "false"), "with_metallb": ("true", "false"),
+    "kafka_provider": ("external", "in-cluster"),
+}.items():
+    value = os.environ[key.upper()]
+    if value not in choices: raise SystemExit("Invalid prerequisite choice")
+    record[key] = value
+storage = os.environ["STORAGE_CLASS"]
+if not re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,251}[a-z0-9]|[a-z0-9]", storage):
+    raise SystemExit("Invalid storage selection")
+record["storage_class"] = storage
+record["chart_version"] = "0.0.24"
+record["values_sha256"] = hashlib.sha256(Path("values-osac.yaml").read_bytes()).hexdigest()
+for key, value in record.items(): print(key + "=" + value)
+PY
+
+python3 audit-record.py prereqs > "$PREREQS_AUDIT/prereqs-completion.json"
+(cd "$PREREQS_AUDIT" && sha256sum prereqs-completion.json > audit.sha256)
+
+```
+
+Export only `$PREREQS_AUDIT`; the working record and artifact checksum index stay
+private for the operators consumer. Do not append raw pool state or endpoint
+records to the completion record. The live MCP gates above still must pass.
 
 - [ ] The archived Doc 1 ISC and workspace lineage are available.
 - [ ] Default OperatorHub sources are disabled.
