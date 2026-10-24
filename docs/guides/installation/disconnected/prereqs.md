@@ -26,7 +26,8 @@ set -euo pipefail
 umask 077
 test "$(stat -c %a .)" = 700
 test "$(stat -c %u .)" = "$(id -u)"
-export PREREQS_AUDIT="$(mktemp -d "$PWD/prereqs-audit-XXXXXX")"
+PREREQS_AUDIT="$(mktemp -d "$PWD/prereqs-audit-XXXXXX")" || exit 1
+export PREREQS_AUDIT
 export PROFILE=core                    # core or core-vmaas
 export ENABLE_VMAAS=false              # true or false; must match Doc 1
 export WITH_LVMS=false                 # install LVMS in operators.md only when true
