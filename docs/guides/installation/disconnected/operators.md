@@ -63,21 +63,25 @@ if test -n "$OSAC_RESUME_EVIDENCE"; then
   RUN_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["bindings"]["run_id"])' \
     "$STATE/resume-context.json")" || exit 1
   export RUN_ID
-  printf '%s' "$RUN_ID" | grep -Eq '^[0-9]{8}t[0-9]{6}z-[0-9a-f]{6}$'
 else
-  export RUN_ID="$(date -u +%Y%m%dt%H%M%Sz)-$(openssl rand -hex 3)"
+  run_timestamp="$(date -u +%Y%m%dt%H%M%Sz)" || exit 1
+  run_random="$(openssl rand -hex 3)" || exit 1
+  RUN_ID="$run_timestamp-$run_random"
+  export RUN_ID
   export STATE="$PWD/operators-private-$RUN_ID"
 fi
+printf '%s' "$RUN_ID" | grep -Eq '^[0-9]{8}t[0-9]{6}z-[0-9a-f]{6}$'
 if test -e "$STATE" || test -L "$STATE"; then
   test -d "$STATE" && test -O "$STATE" && ! test -L "$STATE"
   test "$(stat -c %a "$STATE")" = 700
 fi
 mkdir -p "$STATE" "$STATE/manifests" "$STATE/jobs"
-# Serialize reuse of the same evidence directory even from another local working directory.
+# Serialize reuse of the same private state directory even from another local working directory.
 exec 8>"$STATE/.checkpoint.lock"
 flock -n 8 || { echo 'Another local checkpoint/evidence writer is active' >&2; exit 1; }
 export STATE
-export EVIDENCE="$(mktemp -d "$PWD/operators-audit-XXXXXX")"
+EVIDENCE="$(mktemp -d "$PWD/operators-audit-XXXXXX")" || exit 1
+export EVIDENCE
 
 case "$KAFKA_PROVIDER" in external|in-cluster) ;; *) exit 1 ;; esac
 for flag in ENABLE_VMAAS WITH_LVMS WITH_METALLB; do
@@ -111,7 +115,7 @@ approved configuration remain under their owners' rotation/retention policy.
 
 The prerequisite digest describes the original values. This procedure deliberately changes Git, license and AAP TLS values; do not replace that original digest to make a retry pass. A fresh run binds the original digest, the complete extracted chart tree, prerequisite record, explicit selection file, cluster UID, release, namespace and run identity. Each approved values change retains a protected content-addressed snapshot and atomically replaces a versioned resume context. This is private recovery input, not exportable audit evidence or a signed approval or proof that cluster resources remain Ready.
 
-In a clean shell, set `OSAC_RESUME_EVIDENCE` to the previous absolute evidence directory **before** running the administration-session block, and restore the same administration directory and site selections. Do not create a new run/evidence directory or truncate its inventories. The local lock is acquired before evidence writes; coordinate the maintenance window with other administration hosts because this lock does not exclude them. Do not run concurrent checkpoint writers.
+In a clean shell, set `OSAC_RESUME_EVIDENCE` to the previous absolute private `STATE` directory **before** running the administration-session block, and restore the same administration directory and site selections. Do not create a new run/private-state directory or truncate its inventories. Each administration session intentionally creates a fresh audit-only `EVIDENCE` directory; it is not the resume input. The local state lock is acquired before checkpoint/inventory writes; coordinate the maintenance window with other administration hosts because this lock does not exclude them. Do not run concurrent checkpoint writers.
 
 Install the documented data-only checkpoint helper; never `source` or `eval` retained records:
 
@@ -414,7 +418,7 @@ Any mismatch is a prerequisite-contract failure. Stop before Namespace, Subscrip
 
 ### Freeze ownership and capture safe evidence
 
-Keep the administration and evidence-directory locks acquired at entry held throughout the session, and coordinate with every other administration host. These local locks do not serialize remote administrators. Retain existing nonempty session/inventory files on resume; the following initializes only missing fresh-run records.
+Keep the administration and private-state locks acquired at entry held throughout the session, and coordinate with every other administration host. These local locks do not serialize remote administrators. Retain existing nonempty session/inventory files on resume; the following initializes only missing fresh-run records.
 
 ```bash
 if test -n "$OSAC_RESUME_EVIDENCE"; then
@@ -492,7 +496,7 @@ wait_bundle() {
 }
 ```
 
-Success is a matching chart/values handoff, current disconnected checks, agreed ownership, and an evidence directory. Missing images/packages return to Doc 1. DNS, mirror trust, pull-secret, MCP, or input contract failures return to `prereqs.md`. Do not repair these by installing operators.
+Success is a matching chart/values handoff, current disconnected checks, agreed ownership, and a protected private-state directory; audit export occurs only after the final gates. Missing images/packages return to Doc 1. DNS, mirror trust, pull-secret, MCP, or input contract failures return to `prereqs.md`. Do not repair these by installing operators.
 
 
 ### Compile Secret consumers and Phase 2 ownership before creating credentials
@@ -1767,7 +1771,7 @@ curl --proto '=https' --fail --silent --show-error --cacert "$IDP_CA_FILE" \
 
 All endpoints must be internal/site-approved; approve exact hostnames before any request. Do not follow redirects. Retain approved connectivity evidence from an OSAC-namespace workload as well as from the bastion. Set `IDENTITY_CLUSTER_EVIDENCE` to that approved evidence file and verify it is nonempty before completion. If the service is not already prepared, remain in Phase 1 and have its owner complete the canonical identity contract. Do not deploy test fixtures to bypass the gate.
 
-Check the controller's service-account client authentication without logging the token. The subshell removes the protected token directory on success, failure or interruption without replacing the administration shell's traps:
+Check the controller's service-account client authentication without logging the token. The subshell attempts to remove the protected token directory on success, failure or interruption without replacing the administration shell's traps. A cleanup failure blocks completion; the owner must remove any remaining protected temporary inputs in the unrecorded review session before retrying:
 
 ```bash
 (
@@ -1802,6 +1806,16 @@ Create the two runtime credential Secrets from protected files. Existing Secrets
 create_client_secret() (
   set -euo pipefail
   name="$1" client="$2" file="$3"
+  CLIENT_ID="$client" python3 -c '
+import os, pathlib, sys
+try:
+    client = os.environ["CLIENT_ID"]
+    if not client.strip() or any(ord(char) < 32 or ord(char) == 127 for char in client):
+        raise ValueError()
+    if not pathlib.Path(sys.argv[1]).read_bytes(): raise ValueError()
+except Exception:
+    raise SystemExit("Invalid protected credential input; stop for owner review")
+' "$file" || return 1
   if oc get secret "$name" -n "$NS" >/dev/null 2>&1; then
     oc get secret "$name" -n "$NS" -o json \
       | CLIENT_ID="$client" python3 -c '
@@ -1811,6 +1825,9 @@ try:
     expected = pathlib.Path(sys.argv[1]).read_bytes()
     actual = base64.b64decode(data["client-secret"], validate=True)
     actual_id = base64.b64decode(data["client-id"], validate=True)
+    actual_id_text = actual_id.decode("utf-8")
+    if not actual_id_text.strip() or any(ord(char) < 32 or ord(char) == 127 for char in actual_id_text):
+        raise ValueError()
     secret_matches = hmac.compare_digest(hashlib.sha256(actual).digest(),
                                          hashlib.sha256(expected).digest())
     id_matches = hmac.compare_digest(hashlib.sha256(actual_id).digest(),
@@ -2453,7 +2470,7 @@ oc get bundle ca-bundle -o json \
   | jq '{synced:any(.status.conditions[]?; .type == "Synced" and .status == "True")}' \
   > "$STATE/bundle-runtime.json"
 oc get configmap ca-bundle -n "$NS" -o json \
-  | jq '{bundle_present:((.data["ca-bundle.crt"] // "") | length > 0)}' \
+  | jq '{bundle_present:((.data["bundle.pem"] // "") | length > 0)}' \
   > "$STATE/ca-bundle-target.json"
 printf 'responsibility\toutcome\tevidence\n' > "$STATE/bootstrap-responsibilities.tsv"
 printf 'configure-kafka\tpassed\t%s\n' "$KAFKA_EVIDENCE" \
