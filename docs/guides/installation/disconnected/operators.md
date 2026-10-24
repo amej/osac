@@ -1481,7 +1481,10 @@ if ! id osacgit >/dev/null 2>&1; then
   sudo useradd --system --home-dir /srv/git --shell /sbin/nologin osacgit
 fi
 if test -e /srv/git || test -L /srv/git; then
-  test -d /srv/git && ! test -L /srv/git
+  if ! test -d /srv/git || test -L /srv/git; then
+    echo 'ERROR: /srv/git must be a real directory, not a symlink' >&2
+    exit 1
+  fi
   test "$(stat -c '%U:%G' /srv/git)" = osacgit:osacgit
 else
   sudo install -d -o osacgit -g osacgit -m 0750 /srv/git
@@ -1936,7 +1939,7 @@ oc get secret "$AAP_MANIFEST_SECRET" -n "$NS" -o json \
 import base64, hashlib, json, pathlib, sys
 secret = json.load(sys.stdin)
 metadata = secret["metadata"]
-if (secret.get("type") != "Opaque" or
+if (secret.get("type") != "Opaque" or set(secret.get("data", {})) != {"license.zip"} or
     metadata.get("labels", {}).get("osac.openshift.io/project") != "osac-aap" or
     metadata.get("ownerReferences") or
     any(key.startswith("meta.helm.sh/") for key in metadata.get("annotations", {}))):
@@ -1951,7 +1954,7 @@ json.dump({"uid": metadata["uid"], "resourceVersion": metadata["resourceVersion"
 yq -i '.aap.configAsCode.manifest.create = false' "$VALUES_FILE"
 ```
 
-An existing Secret also requires its owner's approval of this exact content and ownership contract; do not relabel a foreign Secret to pass the gate.
+The Secret must contain only the `license.zip` data key with the exact approved ZIP bytes. An existing Secret also requires its owner's approval of this exact content and ownership contract; do not relabel a foreign Secret to pass the gate.
 
 Do not put ZIP bytes into values. For an existing AAP instance, stop before Helm if the chart would create a competing one. Disabling instance creation is not sufficient by itself: the bootstrap endpoint, credentials and adopted-instance contract must all be reviewed with the AAP owner. This document does not assume that a route in `ansible-aap` is the correct instance route, or select the first route in a namespace.
 
