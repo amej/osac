@@ -141,14 +141,17 @@ The command must return `true`. If the selected source file is missing or any en
 Doc 1 sets `targetCatalog: redhat-operators`; later Subscriptions use that exact source name in `openshift-marketplace`.
 
 ```bash
+export EXPECTED_CATALOG_IMAGE="$(yq -er '.spec.image' \
+  "$DOC1_WORKSPACE/working-dir/cluster-resources/cs-redhat-operator-index-v4-22.yaml")"
+test -n "$EXPECTED_CATALOG_IMAGE" && test "$EXPECTED_CATALOG_IMAGE" != null
 oc get catalogsource redhat-operators -n openshift-marketplace \
   -o jsonpath='name={.metadata.name}{" state="}{.status.connectionState.lastObservedState}{" image="}{.spec.image}{"\n"}'
 oc get catalogsource redhat-operators -n openshift-marketplace -o json \
-  | jq -e --arg mirror "${MIRROR_HOST%%:*}" '
+  | jq -e --arg mirror "$MIRROR_HOST" --arg image "$EXPECTED_CATALOG_IMAGE" '
       .metadata.name == "redhat-operators" and
       .metadata.namespace == "openshift-marketplace" and
       .status.connectionState.lastObservedState == "READY" and
-      (.spec.image | contains($mirror))'
+      .spec.image == $image and (.spec.image | split("/")[0]) == $mirror'
 ```
 
 The first command must show `name=redhat-operators state=READY`; the second must return `true`.
@@ -315,9 +318,11 @@ test "$CATALOG_NAMESPACE" = openshift-marketplace
 oc get catalogsource "$CATALOG_SOURCE" -n "$CATALOG_NAMESPACE" \
   -o jsonpath='state={.status.connectionState.lastObservedState}{" image="}{.spec.image}{"\n"}'
 oc get catalogsource "$CATALOG_SOURCE" -n "$CATALOG_NAMESPACE" -o json \
-  | jq -e --arg mirror "${MIRROR_HOST%%:*}" '
+  | jq -e --arg mirror "$MIRROR_HOST" --arg image "$EXPECTED_CATALOG_IMAGE" '
+      .metadata.name == "redhat-operators" and
+      .metadata.namespace == "openshift-marketplace" and
       .status.connectionState.lastObservedState == "READY" and
-      (.spec.image | contains($mirror))'
+      .spec.image == $image and (.spec.image | split("/")[0]) == $mirror'
 ```
 
 > [!WARNING]
@@ -355,7 +360,7 @@ Doc 1 requires certificate-validating registry checks without `-k`. Repeat that 
 for node in $(oc get nodes -o name); do
   code="$(
     oc debug "$node" -- chroot /host \
-      curl -sS -o /dev/null -w '%{http_code}' \
+      curl -sS --connect-timeout 10 --max-time 30 -o /dev/null -w '%{http_code}' \
       "https://${MIRROR_HOST}/v2/"
   )" || {
     echo "ERROR: TLS validation or reachability failed on $node" >&2
@@ -420,9 +425,12 @@ umask 077
 oc get secret pull-secret -n openshift-config -o json \
   > /tmp/pull-secret-current.json
 
-jq --slurpfile mirror "$MIRROR_AUTH_FILE" '
+jq --slurpfile mirror "$MIRROR_AUTH_FILE" --arg host "$MIRROR_HOST" '
+    if ($mirror | length) != 1 or ($mirror[0].auths | keys) != [$host] then
+      error("Mirror authfile must contain only the exact mirror registry entry")
+    else . end |
     (.data[".dockerconfigjson"] | @base64d | fromjson) as $current |
-    ($current * {auths: ($current.auths + $mirror[0].auths)}) as $merged |
+    ($current * {auths: (($current.auths // {}) + {($host): $mirror[0].auths[$host]})}) as $merged |
     .data[".dockerconfigjson"] = ($merged | tojson | @base64) |
     del(.metadata.managedFields, .metadata.creationTimestamp, .metadata.uid)
   ' /tmp/pull-secret-current.json > /tmp/pull-secret-merged.json

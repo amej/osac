@@ -761,12 +761,22 @@ fi
 Verify package identity, source and channel before each apply. For AAP, also verify that the pinned CSV is visible in the mirrored channel:
 
 ```bash
-oc get packagemanifest ansible-automation-platform-operator -n openshift-marketplace -o json \
-  | jq -e --arg csv "$AAP_CSV" '
+check_package() {
+  local package="$1" channel="$2" csv="${3:-}"
+  oc get packagemanifest "$package" -n openshift-marketplace -o json \
+    | jq -e --arg package "$package" --arg channel "$channel" --arg csv "$csv" '
+      .metadata.name == $package and
       .status.catalogSource == "redhat-operators" and
       .status.catalogSourceNamespace == "openshift-marketplace" and
-      any(.status.channels[]; .name == "stable-2.6-cluster-scoped" and
-          .currentCSV == $csv)'
+      any(.status.channels[]; .name == $channel and
+          ($csv == "" or .currentCSV == $csv))'
+}
+check_package openshift-cert-manager-operator stable-v1
+check_package ansible-automation-platform-operator stable-2.6-cluster-scoped "$AAP_CSV"
+if test "$KAFKA_PROVIDER" = in-cluster; then check_package amq-streams stable; fi
+if test "$ENABLE_VMAAS" = true; then check_package kubevirt-hyperconverged stable; fi
+if test "$WITH_LVMS" = true; then check_package lvms-operator "stable-$OCP_MINOR"; fi
+if test "$WITH_METALLB" = true; then check_package metallb-operator stable; fi
 ```
 
 A channel head different from the expected pin is a stop, not permission to approve another bundle. Return to the Doc 1 catalog compatibility gate. The pin and Manual mode are present in the inspected 0.0.24 source; `startingCSV` does not permanently block future upgrades by itself.
@@ -953,12 +963,14 @@ approve_plan() {
   oc get installplan "$plan" -n "$namespace" -o json > "$dir/installplan-now.json"
   jq -e --slurpfile old "$dir/installplan.json" '
     .metadata.uid == $old[0].metadata.uid and
+    .status.phase == "RequiresApproval" and
     .spec == $old[0].spec and
     .status.bundleLookups == $old[0].status.bundleLookups and
     .status.plan == $old[0].status.plan' "$dir/installplan-now.json"
   jq '[
     {op:"test",path:"/metadata/uid",value:.metadata.uid},
     {op:"test",path:"/metadata/resourceVersion",value:.metadata.resourceVersion},
+    {op:"test",path:"/status/phase",value:"RequiresApproval"},
     {op:"test",path:"/spec/clusterServiceVersionNames",value:.spec.clusterServiceVersionNames},
     {op:"test",path:"/spec/approved",value:false},
     {op:"replace",path:"/spec/approved",value:true}
@@ -1199,7 +1211,7 @@ wait_condition certificate/default-ca-cert -n cert-manager --for=condition=Ready
 wait_condition clusterissuer/default-ca --for=condition=Ready
 ```
 
-For an enterprise issuer, use its approved manifest and name instead, then run the equivalent `Ready` check. The issuer name used by the Phase 2 values must match this choice. Read that reference rather than assuming that a resource called `default-ca` is the selected signer:
+This procedure supports only CA-Secret-backed issuers, including an approved enterprise CA exposed through `.spec.ca.secretName`. Other issuer providers require a separately reviewed public-signer adapter and issuance verification procedure and cannot complete this guide as written. For a supported enterprise issuer, use its approved manifest and name instead, then run the equivalent `Ready` check. The issuer name used by the Phase 2 values must match this choice. Read that reference rather than assuming that a resource called `default-ca` is the selected signer:
 
 ```bash
 ISSUER_KIND="$(jq -er '.issuer_ref.kind' "$EVIDENCE/selection-bound.json")" || exit 1
@@ -1218,11 +1230,9 @@ openssl crl2pkcs7 -nocrl -certfile "$CA_BUNDLE_FILE" \
 oc create configmap osac-source-ca -n cert-manager \
   --from-file=bundle.pem="$CA_BUNDLE_FILE" --dry-run=client -o yaml \
   > "$EVIDENCE/manifests/osac-source-ca.yaml"
-apply_manifest "$EVIDENCE/manifests/osac-source-ca.yaml"
-oc label namespace "$NS" osac.openshift.io/phase1-trust=true --overwrite
 ```
 
-For a dedicated namespace already approved for this trust distribution, create the Bundle:
+For a dedicated namespace already approved for this trust distribution, prepare the Bundle. Before applying it or enabling its namespace selector, inspect existing Bundles and the target ConfigMap. An existing `ca-bundle` must have the exact reviewed specification and owner approval; a target ConfigMap must be controlled by that Bundle. Reject other Bundles whose selectors would match this namespace after labeling. Coordinate exclusive trust administration for this check/apply window; these separate resources cannot be checked atomically.
 
 ```bash
 cat > "$EVIDENCE/manifests/osac-ca-bundle.yaml" <<'EOF'
@@ -1242,7 +1252,61 @@ spec:
       matchLabels:
         osac.openshift.io/phase1-trust: "true"
 EOF
+yq -o=json '.' "$EVIDENCE/manifests/osac-ca-bundle.yaml" > "$EVIDENCE/desired-bundle.json"
+oc get bundles -o json > "$EVIDENCE/bundles-before.json"
+oc get namespace "$NS" -o json > "$EVIDENCE/trust-namespace-before.json"
+oc get configmap ca-bundle -n "$NS" --ignore-not-found -o json \
+  > "$EVIDENCE/trust-target-before.json"
+python3 - "$EVIDENCE" <<'PY'
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+desired = json.loads((root / "desired-bundle.json").read_text())
+namespace = json.loads((root / "trust-namespace-before.json").read_text())
+labels = namespace["metadata"].get("labels", {})
+if labels.get("osac.openshift.io/phase1-trust", "true") != "true":
+    raise SystemExit("Conflicting namespace trust label; stop for owner review")
+labels = dict(labels, **{"osac.openshift.io/phase1-trust": "true"})
+def matches(selector):
+    if any(labels.get(key) != value for key, value in selector.get("matchLabels", {}).items()):
+        return False
+    for expression in selector.get("matchExpressions", []):
+        key, operator = expression["key"], expression["operator"]
+        values = expression.get("values", [])
+        if operator == "In": result = key in labels and labels[key] in values
+        elif operator == "NotIn": result = key not in labels or labels[key] not in values
+        elif operator == "Exists": result = key in labels
+        elif operator == "DoesNotExist": result = key not in labels
+        else: raise SystemExit("Unsupported namespace selector")
+        if not result: return False
+    return True
+existing = None
+for bundle in json.loads((root / "bundles-before.json").read_text())["items"]:
+    if bundle["metadata"]["name"] == "ca-bundle":
+        if bundle["spec"] != desired["spec"]:
+            raise SystemExit("Existing ca-bundle differs; stop for owner review")
+        existing = bundle
+    elif matches(bundle["spec"].get("target", {}).get("namespaceSelector", {})):
+        raise SystemExit("Another Bundle would select the namespace; stop for owner review")
+target_text = (root / "trust-target-before.json").read_text().strip()
+if target_text:
+    target = json.loads(target_text)
+    if not existing or not any(
+        owner.get("uid") == existing["metadata"]["uid"] and
+        owner.get("kind") == "Bundle" and owner.get("controller") is True
+        for owner in target["metadata"].get("ownerReferences", [])
+    ):
+        raise SystemExit("Foreign target ConfigMap; stop for owner review")
+PY
+```
+
+Record owner approval of any existing Bundle and its target from these snapshots before continuing. Also inspect and obtain approval for the existing `cert-manager/osac-source-ca` input before applying its reviewed public certificate content; do not overwrite a foreign source ConfigMap.
+
+```bash
+apply_manifest "$EVIDENCE/manifests/osac-source-ca.yaml"
 apply_manifest "$EVIDENCE/manifests/osac-ca-bundle.yaml"
+namespace_version="$(jq -er '.metadata.resourceVersion' "$EVIDENCE/trust-namespace-before.json")"
+oc label namespace "$NS" osac.openshift.io/phase1-trust=true \
+  --resource-version="$namespace_version"
 wait_bundle
 oc get configmap ca-bundle -n "$NS" -o json \
   | jq -e '.data["bundle.pem"] | contains("BEGIN CERTIFICATE")'
@@ -1252,7 +1316,7 @@ oc get configmap ca-bundle -n "$NS" -o json \
 
 For the reference CA-backed issuer, obtain its actual signing certificate from its referenced Secret and verify that certificate's SHA-256 fingerprint in both the approved input chain and `ca-bundle/bundle.pem`. Also require exact equality of their complete certificate-fingerprint sets: no approved root/intermediate may be omitted, and no unapproved certificate may be distributed. Certificate order and duplicate copies do not change the set. `SIGNER_SECRET_NAMESPACE` must match cert-manager's configured cluster-resource namespace for a ClusterIssuer; the reference deployment uses `cert-manager`. A namespaced Issuer uses the OSAC release namespace.
 
-For an enterprise issuer backed by another provider, its owner must supply an equivalent verified public-signer adapter and issuance evidence. The CA-Secret adapter below deliberately rejects a non-CA issuer rather than trusting an arbitrary local PEM file.
+The CA-Secret adapter below deliberately rejects a non-CA issuer rather than trusting an arbitrary local PEM file. Such a provider is outside this procedure's supported scope.
 
 ```bash
 export SIGNER_SECRET_NAMESPACE=cert-manager
@@ -1416,7 +1480,12 @@ test -x /usr/bin/git
 if ! id osacgit >/dev/null 2>&1; then
   sudo useradd --system --home-dir /srv/git --shell /sbin/nologin osacgit
 fi
-sudo install -d -o osacgit -g osacgit -m 0750 /srv/git
+if test -e /srv/git || test -L /srv/git; then
+  test -d /srv/git && ! test -L /srv/git
+  test "$(stat -c '%U:%G' /srv/git)" = osacgit:osacgit
+else
+  sudo install -d -o osacgit -g osacgit -m 0750 /srv/git
+fi
 ```
 
 The package transaction must use the site's approved repositories. If package retrieval fails, stop; do not change repository trust or use an arbitrary installer.
@@ -1466,7 +1535,7 @@ If an existing server lacks the requested commit, stop and plan a separately rev
 
 #### Configure the read-only service and firewall
 
-Check that TCP 9418 is not already owned by another service before creating the unit. The following unit exports only repositories with `git-daemon-export-ok`; it does not use `--export-all`:
+Check that TCP 9418 is not already owned by another service before creating the unit. The following unit allows only the exact `/srv/git/osac.git` repository and still requires `git-daemon-export-ok`; `--strict-paths` prevents exporting other repositories under `/srv/git`. It does not use `--export-all`:
 
 ```bash
 sudo tee /etc/systemd/system/osac-git-daemon.service >/dev/null <<EOF
@@ -1479,7 +1548,7 @@ Wants=network-online.target
 Type=simple
 User=osacgit
 Group=osacgit
-ExecStart=/usr/bin/git daemon --reuseaddr --verbose --base-path=/srv/git --listen=${BASTION_IP} --port=9418 --disable=receive-pack --forbid-override=receive-pack /srv/git
+ExecStart=/usr/bin/git daemon --reuseaddr --verbose --strict-paths --base-path=/srv/git --listen=${BASTION_IP} --port=9418 --disable=receive-pack --forbid-override=receive-pack /srv/git/osac.git
 Restart=on-failure
 NoNewPrivileges=true
 PrivateTmp=true
@@ -1610,56 +1679,62 @@ export UI_BACKEND_CLIENT_SECRET_FILE='<protected-ui-backend-client-secret-file>'
 test -s "$IDP_CA_FILE"
 test -s "$CONTROLLER_CLIENT_SECRET_FILE"
 test -s "$UI_BACKEND_CLIENT_SECRET_FILE"
-curl --proto '=https' --fail --silent --show-error --cacert "$IDP_CA_FILE" \
-  "$OIDC_ISSUER/.well-known/openid-configuration" > "$EVIDENCE/oidc-discovery.json"
-jq -e --arg issuer "$OIDC_ISSUER" '
-  .issuer == $issuer and (.token_endpoint|length>0) and (.jwks_uri|length>0)' \
-  "$EVIDENCE/oidc-discovery.json"
-jwks_uri="$(jq -r '.jwks_uri' "$EVIDENCE/oidc-discovery.json")"
-curl --proto '=https' --fail --silent --show-error --cacert "$IDP_CA_FILE" "$jwks_uri" \
-  | jq -e '.keys | length > 0'
-```
-
-All endpoints must be internal/site-approved; discovery that redirects clients to a public identity service fails the disconnected contract. Retain approved connectivity evidence from an OSAC-namespace workload as well as from the bastion. Set `IDENTITY_CLUSTER_EVIDENCE` to that approved evidence file and verify it is nonempty before completion. If the service is not already prepared, remain in Phase 1 and have its owner complete the canonical identity contract. Do not deploy test fixtures to bypass the gate.
-
-Check the controller's service-account client authentication without logging the token:
-
-```bash
-credential_test_dir="$(mktemp -d)"
-chmod 0700 "$credential_test_dir"
-# Approve an exact hostname list; no suffix/substring matching and no automatic redirect following.
 export KEYCLOAK_ALLOWED_HOSTS='<comma-separated-approved-keycloak-hostnames>'
-python3 - "$OIDC_ISSUER" "$EVIDENCE/oidc-discovery.json" "$EVIDENCE/checked-token-endpoint.txt" <<'PY'
+cat > "$EVIDENCE/check-oidc-endpoints.py" <<'PY'
 import json, os, sys
 from urllib.parse import urlsplit
-issuer, path, output = sys.argv[1:]
+issuer = sys.argv[1]
 allowed={h.strip().lower() for h in os.environ["KEYCLOAK_ALLOWED_HOSTS"].split(",") if h.strip()}
 if not allowed: raise SystemExit("Keycloak hostname allowlist is empty")
 def checked(url):
     u=urlsplit(url)
     if u.scheme != "https" or not u.hostname or u.hostname.lower() not in allowed:
         raise SystemExit("OIDC URL must use HTTPS and an exact approved Keycloak host")
-    if u.username is not None or u.password is not None or u.fragment:
-        raise SystemExit("Unexpected userinfo/fragment in OIDC URL")
+    if u.username is not None or u.password is not None or u.fragment or u.query:
+        raise SystemExit("Unexpected userinfo/fragment/query in OIDC URL")
     return url
 checked(issuer)
-d=json.load(open(path))
-if d["issuer"] != issuer: raise SystemExit("Issuer mismatch")
-checked(d["jwks_uri"])
-token=checked(d["token_endpoint"])
-with open(output,"w") as f: f.write(token+"\n")
+if len(sys.argv) > 2:
+    discovery=json.load(open(sys.argv[2]))
+    if discovery["issuer"] != issuer: raise SystemExit("Issuer mismatch")
+    checked(discovery["jwks_uri"])
+    checked(discovery["token_endpoint"])
 PY
-token_endpoint="$(cat "$EVIDENCE/checked-token-endpoint.txt")" || exit 1
-curl --proto '=https' --proto-redir '=https' --fail --silent --show-error --cacert "$IDP_CA_FILE" \
+python3 "$EVIDENCE/check-oidc-endpoints.py" "$OIDC_ISSUER"
+curl --proto '=https' --fail --silent --show-error --cacert "$IDP_CA_FILE" \
+  --connect-timeout 10 --max-time 30 \
+  "$OIDC_ISSUER/.well-known/openid-configuration" > "$EVIDENCE/oidc-discovery.json"
+python3 "$EVIDENCE/check-oidc-endpoints.py" "$OIDC_ISSUER" "$EVIDENCE/oidc-discovery.json"
+jwks_uri="$(jq -er '.jwks_uri' "$EVIDENCE/oidc-discovery.json")"
+curl --proto '=https' --fail --silent --show-error --cacert "$IDP_CA_FILE" \
+  --connect-timeout 10 --max-time 30 "$jwks_uri" | jq -e '.keys | length > 0'
+```
+
+All endpoints must be internal/site-approved; approve exact hostnames before any request. Do not follow redirects. Retain approved connectivity evidence from an OSAC-namespace workload as well as from the bastion. Set `IDENTITY_CLUSTER_EVIDENCE` to that approved evidence file and verify it is nonempty before completion. If the service is not already prepared, remain in Phase 1 and have its owner complete the canonical identity contract. Do not deploy test fixtures to bypass the gate.
+
+Check the controller's service-account client authentication without logging the token. The subshell removes the protected token directory on success, failure or interruption without replacing the administration shell's traps:
+
+```bash
+(
+set -euo pipefail
+credential_test_dir="$(mktemp -d)"
+trap 'rm -rf -- "$credential_test_dir"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+chmod 0700 "$credential_test_dir"
+python3 "$EVIDENCE/check-oidc-endpoints.py" "$OIDC_ISSUER" "$EVIDENCE/oidc-discovery.json"
+token_endpoint="$(jq -er '.token_endpoint' "$EVIDENCE/oidc-discovery.json")"
+curl --proto '=https' --fail --silent --show-error --cacert "$IDP_CA_FILE" \
+  --connect-timeout 10 --max-time 30 \
   --data-urlencode grant_type=client_credentials \
   --data-urlencode "client_id=$CONTROLLER_CLIENT_ID" \
   --data-urlencode "client_secret@$CONTROLLER_CLIENT_SECRET_FILE" \
   "$token_endpoint" > "$credential_test_dir/token.json"
 jq -e '(.access_token // "" | length) > 0' "$credential_test_dir/token.json" >/dev/null
-rm -rf "$credential_test_dir"
 printf 'issuer=%s\ncontroller_client=%s\nauthenticated_at=%s\n' \
   "$OIDC_ISSUER" "$CONTROLLER_CLIENT_ID" "$(date -u +%FT%TZ)" \
   > "$EVIDENCE/controller-authentication.txt"
+)
 unset token_endpoint
 ```
 
@@ -1849,17 +1924,34 @@ Check the actual child-chart contract for the manifest Secret. The default name 
 export AAP_LICENSE_FILE='<absolute-path-to-approved-license.zip>'
 export AAP_MANIFEST_SECRET="$(yq -r '.aap.configAsCode.manifestSecret // "config-as-code-manifest-ig"' "$VALUES_FILE")"
 test -s "$AAP_LICENSE_FILE"
-if ! oc get secret "$AAP_MANIFEST_SECRET" -n "$NS" >/dev/null 2>&1; then
+existing_manifest="$(oc get secret "$AAP_MANIFEST_SECRET" -n "$NS" --ignore-not-found -o name)"
+if test -z "$existing_manifest"; then
   oc create secret generic "$AAP_MANIFEST_SECRET" -n "$NS" \
-    --from-file=license.zip="$AAP_LICENSE_FILE"
+    --from-file=license.zip="$AAP_LICENSE_FILE" --dry-run=client -o json \
+    | jq '.metadata.labels = {"osac.openshift.io/project":"osac-aap"}' \
+    | oc create -f -
 fi
-oc label secret "$AAP_MANIFEST_SECRET" -n "$NS" \
-  osac.openshift.io/project=osac-aap --overwrite
 oc get secret "$AAP_MANIFEST_SECRET" -n "$NS" -o json \
-  | jq -e '(.data["license.zip"] // "" | length) > 0 and
-           .metadata.labels["osac.openshift.io/project"] == "osac-aap"'
+  | python3 -c '
+import base64, hashlib, json, pathlib, sys
+secret = json.load(sys.stdin)
+metadata = secret["metadata"]
+if (secret.get("type") != "Opaque" or
+    metadata.get("labels", {}).get("osac.openshift.io/project") != "osac-aap" or
+    metadata.get("ownerReferences") or
+    any(key.startswith("meta.helm.sh/") for key in metadata.get("annotations", {}))):
+    raise SystemExit("Foreign AAP manifest Secret; stop for owner review")
+expected = pathlib.Path(sys.argv[1]).read_bytes()
+actual = base64.b64decode(secret.get("data", {}).get("license.zip", ""), validate=True)
+if not expected or actual != expected:
+    raise SystemExit("AAP manifest content differs from approved ZIP")
+json.dump({"uid": metadata["uid"], "resourceVersion": metadata["resourceVersion"],
+           "sha256": hashlib.sha256(actual).hexdigest()}, sys.stdout)
+' "$AAP_LICENSE_FILE" > "$EVIDENCE/aap-manifest-identity.json"
 yq -i '.aap.configAsCode.manifest.create = false' "$VALUES_FILE"
 ```
+
+An existing Secret also requires its owner's approval of this exact content and ownership contract; do not relabel a foreign Secret to pass the gate.
 
 Do not put ZIP bytes into values. For an existing AAP instance, stop before Helm if the chart would create a competing one. Disabling instance creation is not sufficient by itself: the bootstrap endpoint, credentials and adopted-instance contract must all be reviewed with the AAP owner. This document does not assume that a route in `ansible-aap` is the correct instance route, or select the first route in a namespace.
 
@@ -2094,10 +2186,15 @@ EOF
     | jq -r '.status.loadBalancer.ingress[0] | .ip // .hostname')"
   test -n "$address" && test "$address" != null
   curl --fail --connect-timeout 10 --max-time 20 "http://$address:8080/" >/dev/null
+  oc get service "phase1-lb-$RUN_ID" -n "$NS" -o json \
+    | jq '{metadata:{name:.metadata.name,namespace:.metadata.namespace,uid:.metadata.uid},
+           status:.status}' > "$EVIDENCE/loadbalancer-service.json"
+  printf 'checked_at=%s\naddress=%s\nclient=bastion\nresult=passed\n' \
+    "$(date -u +%FT%TZ)" "$address" > "$EVIDENCE/loadbalancer-client.txt"
 fi
 ```
 
-Repeat the client request from the intended consumer network, not just the bastion. An address without successful client traffic is not a passed LoadBalancer gate. For an existing provider, the same test applies without creating MetalLB objects.
+Repeat the client request from the intended consumer network, not just the bastion. Retain its client identity, address, timestamp and result alongside these files before removing test resources. `PROVIDER_NETWORK_EVIDENCE` must identify the reviewed allocation and both client results. An address without successful client traffic is not a passed LoadBalancer gate. For an existing provider, the same test applies without creating MetalLB objects.
 
 #### HyperConverged and CDI
 
@@ -2161,16 +2258,21 @@ oc get secret "$AAP_MANIFEST_SECRET" -n "$NS" -o json \
 
 Keep the original reviewed and approved InstallPlan UIDs/bundle evidence, including adopted-installation evidence. If OLM now references a different plan, do not approve it during the completion check.
 
-For guide-created/adopted workload Deployments and StatefulSets, check exact desired and ready counts rather than pod listings. Run only in namespaces from the ownership inventory:
+For guide-created/adopted workload Deployments and StatefulSets, check exact desired and ready counts rather than pod listings. First record each selected workload with `record_resource` and review the ownership inventory, including controller-created workloads adopted for this verification. Do not infer ownership from namespace membership. Require a nonempty list and query only its exact names and UIDs:
 
 ```bash
-for namespace in cert-manager "$NS"; do
-  oc get deployment,statefulset -n "$namespace" -o json | jq -e '
-    all(.items[];
+awk -F '\t' '($1 == "Deployment" || $1 == "StatefulSet") &&
+  ($6 == "guide-created" || $6 == "adopted") {print $1 "\t" $2 "\t" $3 "\t" $4}' \
+  "$EVIDENCE/resources.tsv" | sort -u > "$EVIDENCE/owned-workloads.tsv"
+test -s "$EVIDENCE/owned-workloads.tsv"
+while IFS=$'\t' read -r kind namespace name uid; do
+  oc get "$kind" "$name" -n "$namespace" -o json | jq -e --arg uid "$uid" '
+      .metadata.uid == $uid and
+      (
       (.spec.replicas // 1) as $desired |
       (.status.observedGeneration // 0) >= .metadata.generation and
       (.status.readyReplicas // 0) == $desired)'
-done
+done < "$EVIDENCE/owned-workloads.tsv"
 ```
 
 An unrelated existing workload failure is not permission to ignore a failed selected resource; identify ownership explicitly instead of suppressing the check. The OSAC workloads and the chart-owned AAP instance are not expected before Phase 2. Do not install Helm merely to make Phase 1's workload count nonempty.
@@ -2265,25 +2367,33 @@ export IDENTITY_CLUSTER_EVIDENCE='<path-to-successful-osac-namespace-identity-co
 test -s "$IDENTITY_OWNER_EVIDENCE"
 test -s "$IDENTITY_CLUSTER_EVIDENCE"
 if test "$ENABLE_VMAAS" = true; then test -s "$PROVIDER_NETWORK_EVIDENCE"; fi
+wait_bundle
+verify_signer_bundle
+oc get bundle ca-bundle -o json > "$EVIDENCE/bundle-runtime.json"
+oc get configmap ca-bundle -n "$NS" -o json \
+  | jq '{metadata:{name:.metadata.name,namespace:.metadata.namespace,uid:.metadata.uid,
+                   resourceVersion:.metadata.resourceVersion,ownerReferences:.metadata.ownerReferences},
+         data:.data}' > "$EVIDENCE/ca-bundle-target.json"
 printf 'responsibility\toutcome\tevidence\n' > "$EVIDENCE/bootstrap-responsibilities.tsv"
-printf 'configure-kafka\tpassed-%s-provider\t%s\n' "$KAFKA_PROVIDER" "$KAFKA_EVIDENCE" \
+printf 'configure-kafka\tpassed\t%s\n' "$KAFKA_EVIDENCE" \
   >> "$EVIDENCE/bootstrap-responsibilities.tsv"
 if test "$ENABLE_VMAAS" = true; then
-  printf 'configure-metallb\tpassed-selected-provider\t%s\n' "$PROVIDER_NETWORK_EVIDENCE" \
+  printf 'configure-metallb\tpassed\t%s\n' "$PROVIDER_NETWORK_EVIDENCE" \
     >> "$EVIDENCE/bootstrap-responsibilities.tsv"
 else
   printf 'configure-metallb\tskipped-profile-disabled\tVMaaS-disabled\n' \
     >> "$EVIDENCE/bootstrap-responsibilities.tsv"
 fi
-printf 'apply-ca-bundle\tpassed\t%s/manifests/osac-ca-bundle.yaml\n' "$EVIDENCE" \
+printf 'apply-ca-bundle\tpassed\t%s/bundle-runtime.json;%s/ca-bundle-target.json;%s/signer-bundle-binding.json\n' \
+  "$EVIDENCE" "$EVIDENCE" "$EVIDENCE" \
   >> "$EVIDENCE/bootstrap-responsibilities.tsv"
-printf 'wait-keycloak\tpassed-adopted-service\t%s\n' "$IDENTITY_OWNER_EVIDENCE" \
+printf 'wait-keycloak\tpassed\t%s;%s\n' "$IDENTITY_OWNER_EVIDENCE" "$IDENTITY_CLUSTER_EVIDENCE" \
   >> "$EVIDENCE/bootstrap-responsibilities.tsv"
 printf 'keycloak-set-passwords\tskipped-production-fixture\tNo-demo-users-or-password-resets\n' \
   >> "$EVIDENCE/bootstrap-responsibilities.tsv"
 printf 'create-creds\tpassed\t%s/controller-authentication.txt\n' "$EVIDENCE" \
   >> "$EVIDENCE/bootstrap-responsibilities.tsv"
-printf 'create-ui-backend-creds\tpassed-owner-verified\t%s\n' "$IDENTITY_OWNER_EVIDENCE" \
+printf 'create-ui-backend-creds\tpassed\t%s\n' "$IDENTITY_OWNER_EVIDENCE" \
   >> "$EVIDENCE/bootstrap-responsibilities.tsv"
 test "$(wc -l < "$EVIDENCE/bootstrap-responsibilities.tsv")" -eq 8
 ```
@@ -2324,6 +2434,7 @@ secret_contract=secret-contracts.json
 secret_contract_verification=secret-contract-verification.json
 kafka_canonical_evidence=$KAFKA_EVIDENCE
 vault_canonical_evidence=$VAULT_EVIDENCE
+identity_cluster_evidence=$IDENTITY_CLUSTER_EVIDENCE
 inventory=resources.tsv
 csv_evidence=csvs.tsv
 bootstrap_responsibilities=bootstrap-responsibilities.tsv
