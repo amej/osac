@@ -19,6 +19,7 @@ Log in as a cluster administrator. Replace every value enclosed in angle bracket
 set +x +v
 set +o history
 unset HISTFILE
+unset VALIDATED_CLI_IMAGE
 exec 3>&2
 exec >/dev/null 2>&1
 trap 'printf "%s\n" "Prerequisite gate failed; stop for private owner review" >&3' ERR
@@ -819,6 +820,7 @@ require IDMS. Repository-prefix mappings preserve the complete suffix and image
 version; a similar basename or a reachable registry is not proof. For a pinned
 digest, the ISC must contain that exact approved upstream CLI digest. Missing,
 malformed or conflicting handoff data returns to Doc 1, not a guessed destination.
+Session entry clears inherited CLI proof; keep new proof unexported in this shell.
 
 ```bash
 export CLI_IMAGE="$(yq -r '.cliImage' "$VALUES_FILE")"
@@ -898,7 +900,7 @@ except (KeyError, TypeError, ValueError, AttributeError, OSError, subprocess.Sub
 PY
 skopeo inspect --authfile "$MIRROR_AUTH_FILE" \
   "docker://${CLI_IMAGE}" >/dev/null
-export VALIDATED_CLI_IMAGE="$CLI_IMAGE"
+VALIDATED_CLI_IMAGE="$CLI_IMAGE"
 ```
 
 The rendered-image coverage gate below remains the enforcement backstop for `cliImage` and every other chart image.
