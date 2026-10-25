@@ -812,13 +812,93 @@ Set the released value to the approved mirror-resident reference:
 cliImage: <mirror-registry>/<repository-path>/ose-cli:v4.22
 ```
 
-Verify the chosen image before rendering:
+Verify the chosen image before rendering. Require the exact selected mirror
+authority (including its port), the approved upstream CLI identity in the archived
+ISC, and one unambiguous applicable archived mapping. Tags require ITMS; digests
+require IDMS. Repository-prefix mappings preserve the complete suffix and image
+version; a similar basename or a reachable registry is not proof. For a pinned
+digest, the ISC must contain that exact approved upstream CLI digest. Missing,
+malformed or conflicting handoff data returns to Doc 1, not a guessed destination.
 
 ```bash
 export CLI_IMAGE="$(yq -r '.cliImage' "$VALUES_FILE")"
 test -n "$CLI_IMAGE" && test "$CLI_IMAGE" != null
+python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+
+def require(condition):
+    if not condition:
+        raise ValueError
+
+def repository(value):
+    require(isinstance(value, str))
+    require(re.fullmatch(
+        r'[a-z0-9.-]+(?::[0-9]{1,5})?(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*',
+        value))
+    return value
+
+def reference(value):
+    require(isinstance(value, str))
+    match = re.fullmatch(
+        r'(.+?)(@sha256:[0-9a-f]{64}|:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})', value)
+    require(match is not None)
+    return repository(match[1]), match[2]
+
+def documents(path):
+    return json.loads(subprocess.check_output(
+        ['yq', 'eval-all', '-o=json', '[.]', str(path)], stderr=subprocess.DEVNULL))
+
+try:
+    image = os.environ['CLI_IMAGE']
+    mirror = repository(os.environ['MIRROR_HOST'])
+    require('/' not in mirror)
+    image_repository, version = reference(image)
+    require(image_repository.split('/')[0] == mirror and '/' in image_repository)
+    require(version == ':v4.22' or version.startswith('@sha256:'))
+    workspace = Path(os.environ['DOC1_WORKSPACE'])
+    inventory_documents = documents(workspace.parent / 'imageset-config.yaml')
+    require(len(inventory_documents) == 1)
+    inventory = inventory_documents[0]['mirror']['additionalImages']
+    require(isinstance(inventory, list) and inventory)
+    names = [entry['name'].removeprefix('docker://') for entry in inventory]
+    for name in names:
+        reference(name)
+    upstream = 'registry.redhat.io/openshift4/ose-cli'
+    require(upstream + version in names)
+    kind, field, filename = (
+        ('ImageDigestMirrorSet', 'imageDigestMirrors', 'idms-oc-mirror.yaml')
+        if version.startswith('@') else
+        ('ImageTagMirrorSet', 'imageTagMirrors', 'itms-oc-mirror.yaml'))
+    policies = documents(workspace / 'working-dir' / 'cluster-resources' / filename)
+    entries = []
+    for policy in policies:
+        resources = policy['items'] if policy.get('kind') == 'List' else [policy]
+        for resource in resources:
+            require(resource['kind'] == kind)
+            mappings = resource['spec'][field]
+            require(isinstance(mappings, list))
+            entries.extend(mappings)
+    applicable = []
+    for entry in entries:
+        source = repository(entry['source'])
+        destinations = entry['mirrors']
+        require(isinstance(destinations, list) and destinations)
+        destinations = [repository(destination) for destination in destinations]
+        if upstream == source or upstream.startswith(source + '/'):
+            applicable.append({destination + upstream[len(source):] + version
+                               for destination in destinations
+                               if destination.split('/')[0] == mirror})
+    require(len(applicable) == 1 and applicable[0] == {image})
+except (KeyError, TypeError, ValueError, AttributeError, OSError, subprocess.SubprocessError):
+    raise SystemExit('ERROR: CLI image lacks exact Doc 1 mirror proof; return to Doc 1')
+PY
 skopeo inspect --authfile "$MIRROR_AUTH_FILE" \
   "docker://${CLI_IMAGE}" >/dev/null
+export VALIDATED_CLI_IMAGE="$CLI_IMAGE"
 ```
 
 The rendered-image coverage gate below remains the enforcement backstop for `cliImage` and every other chart image.
@@ -845,7 +925,7 @@ fi
 
 Extract rendered images and compare them with the exact Doc 1 consolidated `additionalImages` inventory and generated IDMS/ITMS mappings.
 
-First create a reproducible, grep-compatible coverage file. It contains upstream source prefixes and exact ISC image names with digests/tags removed. IDMS/ITMS source entries prove cluster redirection; ISC `additionalImages` entries prove the selected workload inventory. Mirror destinations are not used as coverage keys because rendered manifests normally retain upstream names.
+First create a reproducible, grep-compatible coverage file. It contains upstream source prefixes and exact ISC image names with digests/tags removed. IDMS/ITMS source entries prove cluster redirection; ISC `additionalImages` entries prove the selected workload inventory. Mirror destinations are not used as generic coverage keys because rendered manifests normally retain upstream names. Only the exact CLI destination validated above, including its tag or digest, receives a direct-mirror exception; no other image on the selected mirror inherits that proof. Rerun CLI validation in the current session before repeating coverage, including when returning from `operators.md`; do not restore `VALIDATED_CLI_IMAGE` from a checkpoint or audit record.
 
 ```bash
 ISC="$DOC1_WORKSPACE/../imageset-config.yaml"
@@ -876,6 +956,14 @@ yq -r '.. | select(has("image")) | .image' rendered-osac.yaml \
 
 : > uncovered-images.txt
 while IFS= read -r image; do
+  if test "$image" = "$VALIDATED_CLI_IMAGE"; then
+    continue
+  fi
+  image_reference="${image#docker://}"
+  if test "${image_reference%%/*}" = "$MIRROR_HOST"; then
+    echo "$image" >> uncovered-images.txt
+    continue
+  fi
   normalized="$(printf '%s\n' "$image" \
     | sed -E 's#^docker://##; s#@sha256:[0-9a-fA-F]+$##; s#(:[^/:]+)$##')"
   if ! awk -v image="$normalized" '
