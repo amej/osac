@@ -409,14 +409,30 @@ export TRUST_CONFIGMAP="$(oc get image.config.openshift.io/cluster \
   -o jsonpath='{.spec.additionalTrustedCA.name}')"
 export TRUST_CONFIGMAP="${TRUST_CONFIGMAP:-registry-config}"
 
+(
+trust_current=
+trust_merged=
+cleanup_registry_trust() {
+  cleanup_status=$?
+  trap - EXIT
+  if ! rm -f -- "$trust_current" "$trust_merged"; then
+    if test "$cleanup_status" -eq 0; then cleanup_status=1; fi
+  fi
+  exit "$cleanup_status"
+}
+trap cleanup_registry_trust EXIT
+umask 077
+
 if oc get configmap "$TRUST_CONFIGMAP" -n openshift-config >/dev/null 2>&1; then
+  trust_current="$(mktemp "$PWD/.registry-trust-current.XXXXXX")"
+  trust_merged="$(mktemp "$PWD/.registry-trust-merged.XXXXXX")"
   oc get configmap "$TRUST_CONFIGMAP" -n openshift-config -o json \
-    > /tmp/registry-trust-current.json
+    > "$trust_current"
   jq --rawfile ca "$MIRROR_CA_FILE" --arg key "$MIRROR_CA_KEY" '
       .data = ((.data // {}) + {($key): $ca}) |
       del(.metadata.managedFields, .metadata.creationTimestamp, .metadata.uid)
-    ' /tmp/registry-trust-current.json > /tmp/registry-trust-merged.json
-  oc replace -f /tmp/registry-trust-merged.json
+    ' "$trust_current" > "$trust_merged"
+  oc replace -f "$trust_merged"
 else
   oc create configmap "$TRUST_CONFIGMAP" -n openshift-config \
     --from-file="${MIRROR_CA_KEY}=${MIRROR_CA_FILE}"
@@ -427,7 +443,7 @@ oc patch image.config.openshift.io/cluster --type=merge \
 
 oc get configmap "$TRUST_CONFIGMAP" -n openshift-config -o json \
   | jq -e --arg key "$MIRROR_CA_KEY" '.data[$key] | contains("BEGIN CERTIFICATE")'
-rm -f /tmp/registry-trust-current.json /tmp/registry-trust-merged.json
+)
 ```
 
 `oc replace` submits the original `metadata.resourceVersion`; the API rejects a concurrent stale write. On conflict, re-read, merge, and retry. Wait for the affected MCPs to converge using Section 1.
@@ -445,9 +461,23 @@ oc get secret pull-secret -n openshift-config -o json \
 If the command returns `true`, do not rewrite the Secret. If it returns `false`, merge the approved read-only auth and submit the original `resourceVersion`:
 
 ```bash
+(
+pull_current=
+pull_merged=
+cleanup_pull_secret() {
+  cleanup_status=$?
+  trap - EXIT
+  if ! rm -f -- "$pull_current" "$pull_merged"; then
+    if test "$cleanup_status" -eq 0; then cleanup_status=1; fi
+  fi
+  exit "$cleanup_status"
+}
+trap cleanup_pull_secret EXIT
 umask 077
+pull_current="$(mktemp "$PWD/.pull-secret-current.XXXXXX")"
+pull_merged="$(mktemp "$PWD/.pull-secret-merged.XXXXXX")"
 oc get secret pull-secret -n openshift-config -o json \
-  > /tmp/pull-secret-current.json
+  > "$pull_current"
 
 jq --slurpfile mirror "$MIRROR_AUTH_FILE" --arg host "$MIRROR_HOST" '
     if ($mirror | length) != 1 or ($mirror[0].auths | keys) != [$host] then
@@ -457,10 +487,10 @@ jq --slurpfile mirror "$MIRROR_AUTH_FILE" --arg host "$MIRROR_HOST" '
     ($current * {auths: (($current.auths // {}) + {($host): $mirror[0].auths[$host]})}) as $merged |
     .data[".dockerconfigjson"] = ($merged | tojson | @base64) |
     del(.metadata.managedFields, .metadata.creationTimestamp, .metadata.uid)
-  ' /tmp/pull-secret-current.json > /tmp/pull-secret-merged.json
+  ' "$pull_current" > "$pull_merged"
 
-oc replace -f /tmp/pull-secret-merged.json
-rm -f /tmp/pull-secret-current.json /tmp/pull-secret-merged.json
+oc replace -f "$pull_merged"
+)
 ```
 
 On conflict, re-read and merge again. Verify the mirror key without printing credentials:
@@ -731,12 +761,20 @@ Doc 1 identifies the established chart-delivery path: the OSAC chart is publishe
 
 ```bash
 helm version
-curl --fail --silent --show-error https://ghcr.io/v2/ >/dev/null
+ghcr_status="$(curl --silent --show-error --connect-timeout 10 --max-time 30 \
+  --output /dev/null --write-out '%{http_code}' https://ghcr.io/v2/)" || {
+  printf '%s\n' 'GHCR reachability check failed; stop for private owner review' >&3
+  exit 1
+}
+case "$ghcr_status" in
+  200|401) ;;
+  *) printf '%s\n' 'Unexpected GHCR response; stop for private owner review' >&3; exit 1 ;;
+esac
 oc cluster-info
 oc whoami --show-server
 ```
 
-All commands must succeed. If public chart access or the approved cluster tunnel fails, correct the bastion path. Do not push the chart into Quay Mirror or substitute a repository checkout.
+All commands must succeed. HTTP `200` or the unauthenticated `401` challenge proves registry reachability only; the chart pull and version checks below must still pass. If public chart access or the approved cluster tunnel fails, correct the bastion path. Do not push the chart into Quay Mirror or substitute a repository checkout.
 
 ### Download and verify the released chart
 
@@ -756,10 +794,11 @@ No `helm registry login` is required.
 
 ```bash
 helm show values ./osac > values-osac.yaml
-chmod 0600 values-osac.yaml
+export VALUES_FILE="$PWD/values-osac.yaml"
+chmod 0600 "$VALUES_FILE"
 ```
 
-Set released keys for namespace/routes, selected services, PostgreSQL, OIDC, AAP, storage, load balancing, and Secret references. For Kafka fields, use [Kafka Configuration](../kafka-configuration.md) as the normative values contract. For Vault/OpenBao fields, use [Secrets Management Configuration](../secrets-management-configuration.md). Do not copy their connection schemas into this guide. Preserve released image references and rely on the validated IDMS/ITMS redirection unless a released value explicitly requires a mirror-backed override. Do not add `global.imageRegistry`; OSAC 0.0.24 does not define it. Do not embed credentials.
+`VALUES_FILE` selects the canonical file just generated, overriding any inherited selection; keep this binding through the prerequisite checks and handoff to `operators.md`. Edit only `"$VALUES_FILE"` below. Set released keys for namespace/routes, selected services, PostgreSQL, OIDC, AAP, storage, load balancing, and Secret references. For Kafka fields, use [Kafka Configuration](../kafka-configuration.md) as the normative values contract. For Vault/OpenBao fields, use [Secrets Management Configuration](../secrets-management-configuration.md). Do not copy their connection schemas into this guide. Preserve released image references and rely on the validated IDMS/ITMS redirection unless a released value explicitly requires a mirror-backed override. Do not add `global.imageRegistry`; OSAC 0.0.24 does not define it. Do not embed credentials.
 
 ### Review and override `cliImage`
 
@@ -776,7 +815,7 @@ cliImage: <mirror-registry>/<repository-path>/ose-cli:v4.22
 Verify the chosen image before rendering:
 
 ```bash
-export CLI_IMAGE="$(yq -r '.cliImage' values-osac.yaml)"
+export CLI_IMAGE="$(yq -r '.cliImage' "$VALUES_FILE")"
 test -n "$CLI_IMAGE" && test "$CLI_IMAGE" != null
 skopeo inspect --authfile "$MIRROR_AUTH_FILE" \
   "docker://${CLI_IMAGE}" >/dev/null
@@ -787,9 +826,9 @@ The rendered-image coverage gate below remains the enforcement backstop for `cli
 ### Validate and render
 
 ```bash
-helm lint ./osac --values values-osac.yaml
+helm lint ./osac --values "$VALUES_FILE"
 helm template osac ./osac --namespace "$OSAC_NAMESPACE" \
-  --values values-osac.yaml > rendered-osac.yaml
+  --values "$VALUES_FILE" > rendered-osac.yaml
 test -s rendered-osac.yaml
 ```
 
@@ -859,11 +898,11 @@ Upstream image names are expected when mirror redirection covers them. A missing
 Do not require server-side dry-run here: operator CRDs and admission webhooks are installed later by `operators.md`. Record evidence:
 
 ```bash
-sha256sum osac/Chart.yaml values-osac.yaml rendered-osac.yaml rendered-images.txt \
+sha256sum osac/Chart.yaml "$VALUES_FILE" rendered-osac.yaml rendered-images.txt \
   > prereqs-artifacts.sha256
 ```
 
-Do not edit `rendered-osac.yaml`; correct `values-osac.yaml` and render again.
+Do not edit `rendered-osac.yaml`; correct `"$VALUES_FILE"` and render again.
 
 ## Completion Record
 
