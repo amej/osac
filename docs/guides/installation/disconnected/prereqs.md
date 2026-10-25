@@ -5,7 +5,7 @@
 
 This guide consumes the read-only handoff from Doc 1, validates cluster access to mirrored content, configures cluster trust and pull credentials where required, records production service contracts, and builds the customer-owned OSAC values file. It does not install operators, operands, shared OSAC infrastructure, or the OSAC Helm release.
 
-Run cluster commands from a secured administration host with `oc`, `jq`, `yq`, `dig` or `nslookup`, `openssl`, `curl`, `skopeo`, `sha256sum`, Python 3, and Helm installed. The host must reach the OpenShift API and mirror registry. Section 5 additionally requires a controlled workstation or bastion laptop that can reach both the public OCI chart registry and the disconnected cluster API through the approved SSH tunnel or VPN.
+Run cluster commands from a secured administration host with `oc`, `jq`, `yq`, `getent`, `dig` or `nslookup`, `openssl`, `curl`, `skopeo`, `sha256sum`, Python 3, and Helm installed. The host must reach the OpenShift API and mirror registry. Section 5 additionally requires a controlled workstation or bastion laptop that can reach both the public OCI chart registry and the disconnected cluster API through the approved SSH tunnel or VPN.
 
 Install these clients only when their corresponding production service is selected:
 
@@ -957,7 +957,7 @@ if not re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,251}[a-z0-9]|[a-z0-9]", storage):
     raise SystemExit("Invalid storage selection")
 record["storage_class"] = storage
 record["chart_version"] = "0.0.24"
-record["values_sha256"] = hashlib.sha256(Path("values-osac.yaml").read_bytes()).hexdigest()
+record["values_sha256"] = hashlib.sha256(Path(os.environ.get("VALUES_FILE", "values-osac.yaml")).read_bytes()).hexdigest()
 for key, value in record.items(): print(key + "=" + value)
 PY
 
