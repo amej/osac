@@ -202,7 +202,7 @@ Expected: successful pull and extracted `osac/` chart. Registry login is not req
 yq -e '.version == "0.0.24"' osac/Chart.yaml
 ```
 
-Expected local result: `true`. Bind the complete chart/dependency contents, not Chart.yaml alone, in private integrity state.
+Expected local result: `true`. **Chart acceptance:** Before rendering or handoff, require successful signature verification of the pulled chart's exact OCI digest and approved OSAC publisher identity per the [repository chart-signature guidance](https://github.com/osac-project/osac/blob/37a47700819b4a1e4e51057dd503630f05a426e2/README.md). Retain the verified digest/result in existing private integrity state, bound to the complete chart/dependency contents actually used. A version match or local checksum alone is insufficient; failed verification or changed/unbound chart contents block use.
 
 ```bash
 helm show values ./osac
