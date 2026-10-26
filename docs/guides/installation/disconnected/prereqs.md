@@ -6,7 +6,7 @@
 This guide specifies disconnected inputs and acceptance gates. It does not install operators, shared services, provider operands, or the OSAC release. Use the canonical guides for configuration semantics; use the actual downloaded 0.0.24 chart for schema, defaults, images, and rendered consumers. Do not copy a different release's image inventory or version table.
 
 | Canonical reference | Responsibility retained there |
-|---|---|
+| --- | --- |
 | [Customer installation guide](../customer-install-guide.md) | Phase 2 configuration and platform lifecycle |
 | [Helm deployment guide](../helm-deployment-guide.md) | Phase 1 architecture and standard prerequisite concepts |
 | [Kafka configuration](../kafka-configuration.md) | Broker, connection, TLS/SASL, ACL, and rotation contracts |
@@ -36,14 +36,14 @@ Once published, set `OSAC_VALIDATE` to the approved, checksum-verified executabl
 **WIP contract:** Each `prereqs check <gate>` is non-mutating except explicitly approved temporary service probes. It returns exit 0 with fixed `PASS <gate>` only after all required predicates pass; a nonzero exit emits fixed `FAIL <gate>` and blocks progress. Detailed inputs/results stay private. Missing, stale, ambiguous, or malformed evidence is failure, not a skip. No check creates an operator, approves an InstallPlan, or repairs Doc 1.
 
 | Private input | Required value or source |
-|---|---|
+| --- | --- |
 | `OSAC_CHART_REF`, `OSAC_CHART_VERSION` | `oci://ghcr.io/osac-project/charts/osac`, `0.0.24` |
 | `OSAC_NAMESPACE` | `osac`, or the approved consistent release namespace |
 | `DOC1_WORKSPACE` | Original oc-mirror workspace; ISC at its recorded authoritative location |
 | `MIRROR_HOST` | Exact registry authority including port; never substring matching |
 | `MIRROR_CA_FILE`, `MIRROR_AUTH_FILE` | Approved CA path; owner-readable authfile containing only the exact mirror entry and read-only credentials |
 | `CATALOG_SOURCE`, `CATALOG_NAMESPACE` | `redhat-operators`, `openshift-marketplace` |
-| `VALUES_FILE`, chart directory | Protected `values-osac.yaml` and the downloaded/extracted release chart |
+| `VALUES_FILE`, `OSAC_CHART_DIR` | Protected `values-osac.yaml` and exact path to the downloaded/extracted `0.0.24` chart |
 | Approved service inputs | Endpoint, namespace, credential/CA references, and owner evidence; no credential bytes in handoffs |
 
 ## 2. Consume the mirror handoff
@@ -51,7 +51,7 @@ Once published, set `OSAC_VALIDATE` to the approved, checksum-verified executabl
 Doc 1 owns one ISC and workspace lineage, registry population, and generated-resource application. Missing inventory, mirror content, mappings, or package visibility returns to Doc 1; do not create replacement resources here.
 
 | Handoff item | OSAC-specific requirement |
-|---|---|
+| --- | --- |
 | `idms-oc-mirror.yaml` | Generated ImageDigestMirrorSet names and exact source-to-mirror rules |
 | `itms-oc-mirror.yaml` | Generated ImageTagMirrorSet names and exact tag rules; required by this handoff |
 | `cs-redhat-operator-index-v4-22.yaml` | CatalogSource `redhat-operators` in `openshift-marketplace`; exact generated mirror image |
@@ -90,7 +90,7 @@ Check affected-pool convergence:
 Expected: `PASS machineconfig`: every affected pool unpaused, observedGeneration=current generation, Updated=True, updatedMachineCount=machineCount, unavailable/degraded counts zero, and Degraded=False. Creating an IDMS does not drain or reboot nodes; modifying or deleting an IDMS can cause node disruption. ITMS changes can drain nodes. See the [OpenShift 4.22 mirror-set behavior](https://docs.openshift.com/it/documentation/openshift_container_platform/4.22/html/disconnected_environments/updating-a-cluster-in-a-disconnected-environment). Consume the completed rollout; do not reapply policies here.
 
 | Package visibility | Required channel | Selection |
-|---|---|---|
+| --- | --- | --- |
 | `openshift-cert-manager-operator` | `stable-v1` | Core |
 | `ansible-automation-platform-operator` | `stable-2.6-cluster-scoped` | Core |
 | `amq-streams` | `stable` | Core package coverage; live provider follows Kafka selection |
@@ -109,7 +109,7 @@ Expected: `PASS packages`. Every selected PackageManifest must match both `statu
 ## 3. Registry access and bounded configuration
 
 | Parameter | Contract |
-|---|---|
+| --- | --- |
 | Mirror DNS | Approved address reachable from administration host and cluster execution contexts |
 | Registry TLS | Hostname and chain validation using approved trust; no `-k` or public fallback |
 | Node registry probe | Each applicable node reaches `https://<mirror-authority>/v2/`; HTTP `200` or `401` proves transport only |
@@ -143,7 +143,7 @@ Expected: `PASS registry` after correction. Missing manifest/blob/repository or 
 These are **installation selections**, not seven invented Helm values. Persist the original names for the downstream consumer; parse the selection file as data, never source it into a shell.
 
 | Selection field | Allowed value and chart relationship |
-|---|---|
+| --- | --- |
 | `profile` | `core` or `core-vmaas`; no independent Helm key |
 | `enable_vmaas` | `false` or `true`; must equal `global.services.vmaas.enabled` |
 | `with_lvms` | Explicit boolean; true installs LVMS later, only with VMaaS; not an `osac` chart key |
@@ -155,7 +155,7 @@ These are **installation selections**, not seven invented Helm values. Persist t
 `core` requires `enable_vmaas=false`; `core-vmaas` requires true. Set `global.services.caas.enabled=false`, `global.services.bmaas.enabled=false` and `global.services.maas.enabled=false` for both profiles in this workflow. Mirroring optional packages does not authorize consuming disks or installing another load-balancer provider.
 
 | Production dependency | Required private contract and readiness |
-|---|---|
+| --- | --- |
 | PostgreSQL | Approved host/port/database, TLS CA and client identity, backup/restore owner evidence; authenticated temporary-table test returns count `1` |
 | Database URL | Released shape: `postgres://<user>@<host>:5432/<database>?sslmode=verify-full&sslrootcert=<mounted-ca>&sslcert=<mounted-cert>&sslkey=<mounted-key>`; actual paths from render |
 | Database consumers | `dbInit.host`, `service.database.connection[]`; URL Secret key `url`; exact mounted keys/names come from rendered consumers |
@@ -211,7 +211,7 @@ helm show values ./osac
 Expected local result: released defaults. Initialize the protected `VALUES_FILE` only when absent, using a no-clobber workflow; never truncate an existing approved file. Edit values through the canonical contracts; subsequent corrections modify values, not rendered manifests.
 
 | Values delta | OSAC 0.0.24 requirement |
-|---|---|
+| --- | --- |
 | `cliImage`, `aap.bootstrap.cliImage` | Merge `{cliImage: "<approved-mirror-cli-ref>", aap: {bootstrap: {cliImage: "<approved-mirror-cli-ref>"}}}` into protected `$VALUES_FILE`, preserving other `aap` keys; these independent settings otherwise retain Origin `4.20.0` defaults. Do not rely on a root-only or transient `--set` override. |
 | CLI-specific acceptance before Helm (WIP) | Existing `prereqs check render` must verify each rendered CLI consumer and exact mirror lineage/availability; `prereqs check registry` must cover the selected image with a fresh cluster pull and non-mutating required-tool smoke test in an approved existing probe context. Pull success alone does not prove script compatibility. |
 | CLI failure | Unpullable images block hook startup; missing/incompatible tools fail bootstrap/token scripts and can block or time out Helm hooks. Stop on failed preflight, correct approved values or the mirror/tool contract, then rerun both gates; do not bypass hooks. |
@@ -253,10 +253,10 @@ Expected: `PASS render`: no unresolved placeholders or embedded credentials; act
 Expected: `PASS complete` only after all applicable checks and change-owner review. Stage a consistent private record set, then atomically publish its final generation marker; failure/interruption must leave the last valid generation or no completion, never partial success. Recheck live state at the next boundary; a past record is not continuing readiness or authorization.
 
 | Artifact | Consumer and boundary |
-|---|---|
+| --- | --- |
 | `prerequisite-selection.env` | Protected, data-only selections; retain explicit fields and consistent approved inputs |
 | `prereqs-completion.txt` | Private `profile`, `enable_vmaas`, `with_lvms`, `with_metallb`, `kafka_provider`, `storage_class`, `chart_version=0.0.24`, original `values_sha256` |
-| `prereqs-artifacts.sha256` and private input state | Bind original values/render, complete chart, Doc 1 lineage, provider evidence and resource identities; available for owner verification/resume, not audit export |
+| `prereqs-artifacts.sha256` and private input state | Bind original values/render, complete chart, protected `OSAC_CHART_DIR` path (consume unchanged in `aap-git-source.md`), Doc 1 lineage, provider evidence and resource identities; available for owner verification/resume, not audit export |
 | Fresh prerequisite audit directory | Only schema-versioned allowlisted outcomes, timestamp, release/selections and approved configuration checksums; never endpoints, raw logs, source paths, credential-derived hashes or private input files |
 
 For Core + VMaaS with enterprise storage/network and external Kafka, select `core-vmaas`, `enable_vmaas=true`, both `with_*` fields false, the approved storage class, and `kafka_provider=external`. The administrator sees each fixed gate result and retains exact private bindings; the record agrees with values before `operators.md` begins.
@@ -265,11 +265,10 @@ If the workload PVC cannot bind or write, `providers` fails and no completion re
 
 Remove only this run's approved temporary objects using recorded UID/ownership preconditions; never delete a shared namespace or adopted resource. Retain private runtime inputs through Phase 2 and the approved retry window, then dispose under the site's secret-media policy. Continue to [AAP Git source handoff](aap-git-source.md) with the reviewed prerequisite handoff, then to [operators and shared infrastructure](operators.md) with its validated Git handoff; deliberate later values edits preserve the original prerequisite digest and require a new approved checkpoint, not an overwritten past record.
 
-
 ### Secret-key acceptance reference
 
 | Consumer | Required released key contract |
-|---|---|
+| --- | --- |
 | Cluster registry authentication | `openshift-config/pull-secret`: `.dockerconfigjson`; exact mirror entry validated privately |
 | PostgreSQL connection | URL source key `url`; client TLS mount keys and producer ownership resolved from the actual render |
 | Default Kafka connection | `fulfillment-service-kafka`: `brokers`, `user`, `password`; external sources may remap keys through the canonical structured connection contract |

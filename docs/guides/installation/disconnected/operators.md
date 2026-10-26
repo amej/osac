@@ -17,7 +17,7 @@ Continue in the protected administration context from `prereqs.md`. One change o
 Set `NS="$OSAC_NAMESPACE"` from the protected prerequisite value; `$NS` is the same release namespace, not an independent input.
 
 | Input | Required value or contract |
-|---|---|
+| --- | --- |
 | OSAC chart | Actual downloaded `osac` chart, version `0.0.24` |
 | Release source | Approved checkout of `osac/v0.0.24`, with Git provenance |
 | OSAC namespace | `$OSAC_NAMESPACE`, `osac` in examples; use the namespace bound by prerequisites |
@@ -109,7 +109,7 @@ Use the [OpenShift operator installation procedure](https://docs.redhat.com/en/d
 All OLM rows use `source: redhat-operators` and `sourceNamespace: openshift-marketplace`. `startingCSV` is an initial selection, not a permanent upgrade lock.
 
 | Operator | Namespace | Channel | CSV Pin | Approval Strategy | CatalogSource | Notes |
-|---|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- | --- |
 | cert-manager | `cert-manager-operator` | `stable-v1` | None specified; record resolved CSV | Automatic | `redhat-operators` | Package/Subscription `openshift-cert-manager-operator`; AllNamespaces |
 | trust-manager | `cert-manager` | Not OLM | Not a CSV: standalone `v0.20.0` | Reviewed release manifest/adoption | Not applicable | Install after cert-manager webhook readiness; do not invent a Subscription |
 | MetalLB | `metallb-system` | `stable` | None specified; record resolved CSV | Automatic | `redhat-operators` | Package/Subscription `metallb-operator`; OwnNamespace; only with MetalLB |
@@ -174,7 +174,7 @@ oc --request-timeout=30s wait crd/"$CRD" --for=condition=Established --timeout=1
 Expected: `<CRD> condition met`.
 
 | Selection | Required CRDs |
-|---|---|
+| --- | --- |
 | cert-manager initialization | `certmanagers.operator.openshift.io` |
 | cert-manager consumers | `certificates.cert-manager.io` |
 | trust-manager | `bundles.trust.cert-manager.io` |
@@ -247,7 +247,7 @@ Expected: `true`. Do not create dependent Certificates while this fails.
 Use the approved `osac/v0.0.24` blob `osac-installer/prerequisites/trust-manager.yaml`, not current main or an unverified working-tree copy. A compatible existing controller may be adopted with its owner's approval.
 
 | Component | Release reference |
-|---|---|
+| --- | --- |
 | Controller | `quay.io/jetstack/trust-manager:v0.20.0` |
 | Trust package | `quay.io/jetstack/trust-pkg-debian-bookworm:20230311-deb12u1.1` |
 | Trust namespace | `cert-manager` |
@@ -413,7 +413,7 @@ Expected: `PASS signer-bundle`; missing or unapproved certificates block consume
 Examples below use release name/namespace `osac`. The actual chart plus approved values render is authoritative, including name overrides and independent credential roles.
 
 | Resource | Keys / value contract | Owner / phase |
-|---|---|---|
+| --- | --- | --- |
 | `cert-manager/default-ca` | Signer `tls.crt` and private `tls.key`; approved local-CA path only | CA owner / cert-manager; never export key |
 | `cert-manager/osac-source-ca` ConfigMap | `bundle.pem`, approved combined public CA chain | Trust owner, Phase 1 |
 | `$NS/ca-bundle` ConfigMap | `bundle.pem`, synchronized approved trust set | Bundle controller, Phase 1 |
@@ -423,8 +423,8 @@ Examples below use release name/namespace `osac`. The actual chart plus approved
 | `$NS/config-as-code-manifest-ig` | Only `license.zip`, exact approved ZIP; label `osac.openshift.io/project=osac-aap` | External license input, Phase 1; override via `aap.configAsCode.manifestSecret` |
 | `$NS/osac-vault-credentials` | `client-secret`, dedicated canonical Vault client | Canonical secrets guide example; site may override |
 | `$NS/vault-ca-bundle` ConfigMap | `bundle.pem`, approved Vault serving CA | Canonical secrets guide example; site may use shared trusted pool |
-| `$NS/external-kafka` ConfigMap | `brokers`, `user` | Canonical external Kafka example |
-| `$NS/external-kafka-credentials` | `password` | Canonical external Kafka example |
+| `$NS/external-kafka` ConfigMap | Explicit `service.kafka.connection[].configMap`: `name=external-kafka`, `brokers`→`brokers`, `user`→`user` (`key`→`param`) | External Kafka example; `kafka.enabled=false`; no automatic wiring |
+| `$NS/external-kafka-credentials` Secret | Explicit `service.kafka.connection[].secret`: `name=external-kafka-credentials`, `password`→`password` (`key`→`param`) | External Kafka example; no automatic wiring |
 | `$NS/fulfillment-service-kafka` | `brokers`, `user`, `password` | In-cluster default destination; Phase 2 chart-owned |
 | `$NS/osac-db-config` | `url` with rendered host/database and verify-full connection | Phase 2 Helm-owned; do not pre-create |
 | `$NS/osac-db-client-cert` | Rendered client-certificate output, including required `tls.crt`/`tls.key` and configured projected keys | Phase 2 Certificate-owned; do not pre-create |
@@ -611,7 +611,7 @@ spec:
 **LoadBalancer gate** — use the same protected `$LOADBALANCER_PROVIDER` input and `with_metallb` relationship as `prereqs.md`; an unset, unknown or inconsistent value blocks progress.
 
 | `$LOADBALANCER_PROVIDER` | Required branch before the gate |
-|---|---|
+| --- | --- |
 | `existing` | Requires `with_metallb=false`; adopt the approved existing provider and create no MetalLB resources. Recheck allocation and client traffic for both Core and Core + VMaaS. |
 | `metallb` | Requires `with_metallb=true` and VMaaS enabled; first verify the selected MetalLB operator and owner-approved operands, then test allocation and client traffic. |
 
@@ -688,7 +688,7 @@ Expected: `PASS cdi`; fresh selected `DataVolume=Succeeded`, `VMI=Running`, exac
 These are manual responsibilities, not Jobs to install from the reference charts. Equal hook weights do not imply dependencies may be skipped.
 
 | Weight | Responsibility | Required outcome |
-|---|---|---|
+| --- | --- | --- |
 | 10 | `configure-kafka` | Canonical selected-provider client proof; external provider records no broker installation |
 | 10 | `configure-metallb` | `$LOADBALANCER_PROVIDER=existing`: existing-provider allocation/client proof without MetalLB installation; `metallb`: selected VMaaS MetalLB readiness plus allocation/client proof |
 | 12 | `apply-ca-bundle` | Current Bundle and exact signer/trust-set acceptance |
@@ -728,7 +728,7 @@ If Bundle creation is rejected because trust-manager has no webhook endpoints, t
 If AAP resolves a different InstallPlan or CSV, leave it unapproved. Compare the exact live Subscription and plan with the reviewed snapshot. A missing intended bundle returns to Doc 1; a wrong Subscription remains with this phase. A UID/resourceVersion conflict requires a fresh review, never removal of the precondition.
 
 | Symptom | First boundary / next action |
-|---|---|
+| --- | --- |
 | Catalog/package/image missing | Doc 1 owner; repair authoritative inventory and repeat handoff |
 | DNS, CA, mirror authentication, MCP convergence | Prerequisite owner; do not proceed to operator repair |
 | Pending Manual plan | Change owner reviews exact referenced UID, CSVs, bundles and images |

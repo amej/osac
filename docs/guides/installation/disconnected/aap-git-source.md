@@ -15,7 +15,8 @@ helm show values "$OSAC_CHART_DIR" | yq -er '.aap.configAsCode.projectGitBranch'
 Expected: one full, lowercase 40-character commit. Reject a branch name, short SHA or missing value; never derive the source pin from the EE tag or umbrella version.
 
 | Input | Required contract |
-|---|---|
+| --- | --- |
+| `OSAC_CHART_DIR` | Exact protected prerequisite-handoff path to the downloaded/extracted `0.0.24` chart; consume unchanged in the chart-default check |
 | Release / source | `0.0.24`; `https://github.com/osac-project/osac` |
 | `AAP_COMMIT` | Exact full commit from `aap.configAsCode.projectGitBranch` in the actual chart's defaults |
 | Required tree | Full repository at that commit with `osac-aap/` present as a tree, not a subtree-only replacement repository |
@@ -28,7 +29,7 @@ Release-source cross-check only: `osac/v0.0.24` source values pin `01d1adad87b1e
 ## 2. Git administrator publication contract
 
 | Bastion reference parameter | Required value / constraint |
-|---|---|
+| --- | --- |
 | Bare repository | `/srv/git/osac.git`; serve only this reviewed repository, not all of `/srv/git` |
 | Service identity | Dedicated `osacgit`; read-only service access, no receive-pack or unaudited writer |
 | Service name | `osac-git-daemon.service`; internal listener only; retain SELinux enforcement |
@@ -46,7 +47,7 @@ Serialize publishers across administration hosts using the Git service owner's a
 ## 3. Git administrator → OSAC persona
 
 | Returned field | Consumer contract |
-|---|---|
+| --- | --- |
 | `projectGitUri` | Exact approved internal Git URL, reachable from the disconnected cluster execution context |
 | `projectGitBranch` | Full `AAP_COMMIT`, **not** the advertised branch name or its 12-character suffix |
 | Authentication / trust | Explicit `none` plus approval for the supported unauthenticated reference; no credential bytes |
@@ -57,7 +58,7 @@ The OSAC persona inserts the returned URL into `aap.configAsCode.projectGitUri` 
 
 ## 4. Delivery gate and failure flow (WIP — toolkit unpublished)
 
-> **WIP:** The delivery gate requires the unpublished companion toolkit, an approved version/checksum and the protected `$AAP_GIT_INPUTS` schema. Do not execute the gate until the toolkit is available; accept the handoff only after it passes.
+> **WIP:** The proposed delivery gate is unavailable until the companion toolkit identity/version/checksum and protected `AAP_GIT_INPUTS` path, schema and producer/handoff contract are approved and available. Do not execute the TBF invocation below until then; accept the handoff only after the gate passes.
 
 The gate validates only; it never configures the Git service/firewall or changes the source ref. Any temporary cluster probe requires explicit approval and UID-scoped cleanup.
 
