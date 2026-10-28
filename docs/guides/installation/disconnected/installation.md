@@ -47,13 +47,24 @@ Use the complete prepared `$VALUES_FILE`, including the service selections in [S
 
 ### 4.3 Installing OSAC
 
-For a new `osac` release, run one installation against the prepared namespace and local chart:
+For a new `osac` release, run one installation against the prepared namespace and
+local chart. Save Helm's JSON release record for Section 7; it includes the
+validation hook's explicit success result even after the Job is deleted. Use a new
+file path for each attempt and protect this record like the values file: it can
+contain credentials and rendered Secrets. The subshell preserves Helm's exit
+status without a pipeline masking failures and refuses to overwrite an existing
+record.
 
 ```bash
-helm install osac "$OSAC_CHART_DIR" \
-  --namespace "$NS" \
-  --values "$VALUES_FILE" \
-  --wait --timeout 40m
+export OSAC_INSTALL_RECORD="$PWD/osac-install.json"
+(
+  umask 077
+  set -o noclobber
+  helm install osac "$OSAC_CHART_DIR" \
+    --namespace "$NS" \
+    --values "$VALUES_FILE" \
+    --wait --timeout 40m --output json > "$OSAC_INSTALL_RECORD"
+)
 ```
 
 Do not run competing installations for this target. If Helm fails, stop and use [Section 11](#11-troubleshooting); do not continue to acceptance or bypass hooks. When it completes, verify the installation through [Section 7](#7-verifying-the-installation).
@@ -97,7 +108,24 @@ Perform these checks in order, using the prepared namespace `$NS`, selected prov
 
 1. Run `helm status osac -n "$NS"`; require `STATUS: deployed` before continuing.
 
-2. Check the built-in validation result: a retained validation log ends with `=== Validation passed ===`. In 0.0.24, successful validation, database-init and publishing Jobs are deleted; later `NotFound` is expected cleanup, not a failed installation. Absence alone is not proof of success.
+2. Check the saved release record from Section 4 with `jq`; require exit status
+   zero and `true` from this check (use the rendered Job name if overridden):
+
+   ```bash
+   jq -e --arg ns "$NS" '
+     .name == "osac" and .namespace == $ns and .info.status == "deployed" and
+     [.hooks[]? |
+       select(.kind == "Job" and .name == "osac-pre-install-validate") |
+       .last_run.phase] == ["Succeeded"]
+   ' "$OSAC_INSTALL_RECORD"
+   ```
+
+   In 0.0.24, the pre-install validation Job has `hook-succeeded` cleanup: Helm
+   records `last_run.phase: Succeeded` before deleting it. Successful database-init
+   and publishing Jobs are also deleted. Later `NotFound` or absence is never
+   proof of success; a missing record, missing validation hook or any result other
+   than `Succeeded` fails this check. Do not continue to acceptance without this
+   positive evidence from the successful installation attempt.
 
 3. Confirm the selected Phase 1 Operator CSVs are `Succeeded` and their operands are ready, using the actual namespaces/provider choices from [operators.md](operators.md).
 
