@@ -541,6 +541,12 @@ Touched-area requirements: [component guide](../osac-operator/AGENTS.md#integrat
   `baremetalworker_test.go` queries Kubernetes authorization for the installed
   service account's ClusterOrder/status, InfraEnv, Agent, NodePool and Secret
   permissions. This is RBAC coverage, not worker watch delivery or host allocation.
+- **Remote VMaaS cluster `StorageClass` readiness ([OSAC-6576](https://redhat.atlassian.net/browse/OSAC-6576), DEV):**
+  `internal/controller/storage_controller_test.go` covers dual-`envtest`
+  `MultiClusterWatch` fan-out across two API servers, and
+  `test/integration/remote_storage_cluster_test.go` exercises a live second Kind
+  cluster (`osac-remote`) for remote `StorageClass` watches, kubeconfig Secret
+  rotation, and `Forbidden` RBAC fail-closed recovery.
 - **AAP, dispatcher, provisioning, KubeVirt and fulfillment:** A test-local
   dependency double does not prove the receiving service/provider boundary.
 - **Generated CRDs/manifests:** Change the source and run the owning generator.
